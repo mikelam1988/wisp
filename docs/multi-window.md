@@ -966,3 +966,11 @@ capture and input entries are removed when the popup closes.
 On its dedicated virtual display, System Settings is aligned to the right
 edge so macOS keeps trailing menus inside the streamed area. Without a
 dedicated display, menus can still be clipped by the parent window crop.
+
+### Messages composer popup placement
+
+Messages is anchored to the lower-right corner of its dedicated virtual
+display when shared or resized. macOS can then open the composer's plus menu
+upward and open the emoji picker leftward. Both were verified on a macOS 15
+host. A picker already open before the window moves can keep its old
+placement until it is closed and reopened.

@@ -110,6 +110,7 @@ final class Server {
     var onWindowAction: ((UInt16, UInt8) -> Void)?
     /// The viewer wants an app reopened, as a Dock click would (appKey).
     var onReopenApp: ((String) -> Void)?
+    var onAppRequest: ((UInt32, String?, NWConnection) -> Void)?
     /// The viewer connection closed (not called when a new viewer replaces the old one).
     var onViewerGone: (() -> Void)?
     /// A new viewer said hello (it replaces any earlier one, whose streams are over).
@@ -157,6 +158,7 @@ final class Server {
     func needsIcon(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return iconsSent.insert(key).inserted }
 
     private var listeners: [NWListener] = []
+    private(set) var directAddresses: [String]?
 
     /// Who may connect (see Access.swift).
     lazy var access = AccessControl(hostName: hostName)
@@ -210,20 +212,30 @@ final class Server {
     /// up: NWListener reports a bind failure only later, through its state, so a second host used to
     /// log "listening" while a stale one kept answering viewers.
     func start() throws {
+        let config = try DirectTransport.load()
+        let direct = config?.share == true ? config : nil
         let tcpOpts = NWProtocolTCP.Options()
         tcpOpts.noDelay = true // input events are tiny; never wait to batch them
-        let tcpParams = NWParameters(tls: nil, tcp: tcpOpts)
+        let tcpParams = direct?.tcp(tcpOpts) ?? NWParameters(tls: nil, tcp: tcpOpts)
         tcpParams.allowLocalEndpointReuse = false
         let tcp = try NWListener(using: tcpParams, on: NWEndpoint.Port(rawValue: Wire.tcpPort)!)
-        tcp.newConnectionHandler = { [weak self] c in self?.accept(c) }
+        tcp.newConnectionHandler = { [weak self] c in
+            guard let self else { c.cancel(); return }
+            if direct != nil {
+                self.serve(c, PeerIdentity(kind: .lan, address: Self.hostKey(c.endpoint)))
+            } else {
+                self.accept(c)
+            }
+        }
 
-        let udpParams = NWParameters.udp
+        let udpParams = direct?.udp() ?? .udp
         udpParams.allowLocalEndpointReuse = false
         let udp = try NWListener(using: udpParams, on: NWEndpoint.Port(rawValue: Wire.udpPort)!)
         udp.newConnectionHandler = { [weak self] c in
             Log.debug(.net, "UDP flow from \(c.endpoint)")
-            c.start(queue: self!.q)
-            self?.receiveHello(c)
+            guard let self else { c.cancel(); return }
+            c.start(queue: self.q)
+            self.receiveHello(c, direct: direct != nil)
         }
 
         for (l, what, port) in [(tcp, "tcp", Wire.tcpPort), (udp, "udp", Wire.udpPort)] {
@@ -238,7 +250,8 @@ final class Server {
             Log.debug(.net, "\(what.uppercased()) listener on port \(port) \(l.state.logDescription) in \(Int(Date().timeIntervalSince(t0) * 1000)) ms")
             listeners.append(l)
         }
-        Log.info(.net, "listening on TCP \(Wire.tcpPort) / UDP \(Wire.udpPort) (protocol \(Wire.protocolVersion), host name \"\(hostName)\")")
+        directAddresses = direct?.addresses
+        Log.info(.net, "listening via \(direct == nil ? "Tailscale or loopback" : "authenticated direct connection") on TCP \(Wire.tcpPort) / UDP \(Wire.udpPort) (protocol \(Wire.protocolVersion), host name \"\(hostName)\")")
     }
 
     /// Starts `l` and waits (at most 5 s) for it to be ready; returns the error if it fails.
@@ -460,6 +473,13 @@ final class Server {
             if let key = r.str(), let px = r.u16() { onIconRequest?(key, Int(px)) }
         case .reopenApp:
             if let key = r.str() { Log.info(.host, "← reopenApp \(key)"); onReopenApp?(key) }
+        case .appCatalogRequest, .launchApplication:
+            guard isCurrentViewer(c), let id = r.u32() else { return }
+            if t == .appCatalogRequest {
+                onAppRequest?(id, nil, c)
+            } else if let app = r.str(), !app.isEmpty {
+                onAppRequest?(id, app, c)
+            }
         case .menuRequest:
             if let (key, menu) = MenuTree.decodeRequest(p) { onMenuRequest?(key, menu) }
         case .menuPress:
@@ -515,7 +535,7 @@ final class Server {
         onViewerGone?()
     }
 
-    private func receiveHello(_ c: NWConnection) {
+    private func receiveHello(_ c: NWConnection, direct: Bool) {
         c.receiveMessage { [weak self] data, _, _, err in
             guard let self else { return }
             if let data, data.first == Wire.Datagram.hello.rawValue {
@@ -524,7 +544,8 @@ final class Server {
                     let s = r.u32()
                     lock.lock()
                     let old = udpPeer
-                    let isNew = udpPeer !== c && viewer != nil && s == session
+                    let sameHost = viewer.map { Self.hostKey($0.endpoint) == Self.hostKey(c.endpoint) } ?? false
+                    let isNew = udpPeer !== c && viewer != nil && s == session && (!direct || sameHost)
                     if isNew { udpPeer = c }
                     let current = session, isPeer = udpPeer === c
                     lock.unlock()
@@ -542,19 +563,19 @@ final class Server {
                         watchFlow(c)
                         onVideoPathOpen?()
                     }
-                    if isPeer, let s {
+                    if isPeer, let s, s == current {
                         // The echo: tells the viewer this path works both ways, even when no video is flowing.
                         var w = Writer()
                         w.u8(Wire.Datagram.helloEcho.rawValue)
                         w.u32(s)
                         c.send(content: w.data, completion: .contentProcessed { [weak self] err in if let err { self?.sendFailed(err, on: c) } })
                     }
-                } else {
+                } else if !direct {
                     sendLegacyFrame(on: c) // a protocol-1 viewer's 1-byte hello
                 }
             }
             if let err { Log.debug(.net, "UDP flow from \(c.endpoint) ended: \(err.logDescription)"); return }
-            receiveHello(c)
+            receiveHello(c, direct: direct)
         }
     }
 
@@ -571,6 +592,19 @@ final class Server {
             default: Log.debug(.net, "video path (UDP) to \(c.endpoint) \(st.logDescription)")
             }
         }
+    }
+
+    func isCurrentViewer(_ connection: NWConnection) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return viewer === connection
+    }
+
+    /// Reply on the requesting connection, even if a different viewer has connected in the meantime.
+    func sendAppReply(_ reply: Data, to connection: NWConnection) {
+        guard isCurrentViewer(connection) else { return }
+        bytesOut.add(reply.count)
+        connection.send(content: reply, completion: .idempotent)
     }
 
     func sendControl(_ d: Data) {

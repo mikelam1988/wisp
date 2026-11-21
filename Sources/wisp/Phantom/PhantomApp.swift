@@ -259,6 +259,9 @@ final class PhantomAppDelegate: NSObject, NSApplicationDelegate, WindowOwner, NS
         if activity == nil {
             activity = ProcessInfo.processInfo.beginActivity(options: [.userInitiated, .latencyCritical], reason: "showing remote windows")
         }
+        if NSApp.activationPolicy() == .accessory {
+            NSApp.setActivationPolicy(.regular)
+        }
         let c = ViewerController(session: self, stream: s)
         controllers.append(c)
         c.show()
@@ -343,8 +346,15 @@ final class PhantomAppDelegate: NSObject, NSApplicationDelegate, WindowOwner, NS
     func controllerClosed(_ c: ViewerController) {
         controllers.removeAll { $0 === c }
         if let sid = c.stream?.id { forget(sid) }
-        if controllers.isEmpty, let a = activity { ProcessInfo.processInfo.endActivity(a); activity = nil }
-        // No windows left: the phantom stays, like any app with no windows open.
+        guard controllers.isEmpty else { return }
+        if let activity {
+            ProcessInfo.processInfo.endActivity(activity)
+            self.activity = nil
+        }
+        if !quitting, !Brand.defaults.bool(forKey: Prefs.keepDockIconKey),
+           NSApp.setActivationPolicy(.accessory) {
+            Log.info(.phantom, "hid the Dock icon for \(appName) after its last window closed")
+        }
     }
 
     // MARK: App behaviour

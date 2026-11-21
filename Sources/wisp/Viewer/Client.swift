@@ -23,6 +23,8 @@ struct RemoteWindow {
 final class Client {
     private let q = DispatchQueue(label: "wisp.client")
     private let address: String
+    private let direct: DirectTransport?
+    var usesDirectTransport: Bool { direct != nil }
     private let tcp: NWConnection
     /// The video flow. Replaced (a new source port) when it fails, or when the host's hello echoes
     /// stop arriving while TCP still answers; on q.
@@ -51,6 +53,9 @@ final class Client {
 
     /// The host answered our hello (its name): streams can be opened now.
     var onReady: ((String) -> Void)?
+    var onAppLauncherAvailable: (() -> Void)?
+    var onAppCatalogEntry: ((UInt32, RemoteApplication?) -> Void)?
+    var onAppLaunchResult: ((UInt32, UInt32, String) -> Void)?
     var onHostStatus: ((String) -> Void)?
     /// Connection trouble; after a failure nothing more arrives.
     var onDisconnect: ((String) -> Void)?
@@ -106,11 +111,13 @@ final class Client {
 
     init(host: String) {
         address = host
+        let direct = DirectTransport.viewer(for: host)
+        self.direct = direct
         let tcpOpts = NWProtocolTCP.Options()
         tcpOpts.noDelay = true
         tcp = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: Wire.tcpPort)!,
-                           using: NWParameters(tls: nil, tcp: tcpOpts))
-        udp = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: Wire.udpPort)!, using: .udp)
+                           using: direct?.tcp(tcpOpts) ?? NWParameters(tls: nil, tcp: tcpOpts))
+        udp = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: Wire.udpPort)!, using: direct?.udp() ?? .udp)
     }
 
     private var elapsed: String { String(format: "%.1f s", Date().timeIntervalSince(started)) }
@@ -279,7 +286,7 @@ final class Client {
     /// A new UDP flow (a new source port): the host follows the newest hello. On q.
     private func rebuildUDP(_ why: String) {
         let old = udp
-        udp = NWConnection(host: NWEndpoint.Host(address), port: NWEndpoint.Port(rawValue: Wire.udpPort)!, using: .udp)
+        udp = NWConnection(host: NWEndpoint.Host(address), port: NWEndpoint.Port(rawValue: Wire.udpPort)!, using: direct?.udp() ?? .udp)
         udpFlows += 1
         lastUDPRebuild = Date()
         Log.warning(.net, "UDP \(address): \(why): making a new UDP flow (#\(udpFlows)); the old one was \(old.state.logDescription)")
@@ -405,6 +412,14 @@ final class Client {
         }
     }
 
+    func requestApplications(_ id: UInt32) {
+        sendControl(message(.appCatalogRequest) { $0.u32(id) })
+    }
+
+    func launchApplication(_ app: RemoteApplication, request: UInt32) {
+        sendControl(message(.launchApplication) { $0.u32(request); $0.str(app.id, max: 4096) })
+    }
+
     func requestWindowList() { q.async { self.sendWhenReady(message(.windowListRequest)) } }
 
     /// Ask the host for app `key`'s icon at `px`×`px` (answer: onLargeIcon; an older host never answers).
@@ -491,7 +506,10 @@ final class Client {
                     let supports = h.features & Wire.Feature.clipboard != 0
                     DispatchQueue.main.async { cb.connected(peerSupports: supports) }
                 }
-                main { $0.onReady?(h.name) }
+                main {
+                    if h.features & Wire.Feature.applicationLauncher != 0 { $0.onAppLauncherAvailable?() }
+                    $0.onReady?(h.name)
+                }
             case .refused:
                 // The host won't serve us (its allow-list, or we're not on Tailscale): it says why.
                 var r = Reader(p)
@@ -567,6 +585,17 @@ final class Client {
             guard let wid = r.u32(), let key = r.str(), let name = r.str(), let open = r.u8(), let max = r.u8() else { return }
             Log.info(.viewer, "← newWindowHeld: window \(wid) of \(name) (\(key)), \(open) of \(max) open")
             main { $0.onNewWindowHeld?(wid, key, name, Int(open), Int(max)) }
+        case .appCatalogEntry:
+            guard let request = r.u32() else { return }
+            if r.remaining == 0 {
+                main { $0.onAppCatalogEntry?(request, nil) }
+            } else if let id = r.str(), let name = r.str() {
+                main { $0.onAppCatalogEntry?(request, RemoteApplication(id: id, name: name)) }
+            }
+        case .appLaunchResult:
+            if let request = r.u32(), let window = r.u32(), let status = r.str() {
+                main { $0.onAppLaunchResult?(request, window, status) }
+            }
         case .windowList:
             if let list = WindowEntry.decode(p) {
                 windowLists += 1

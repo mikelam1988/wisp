@@ -38,7 +38,8 @@ enum Probe {
         let tcp = NWProtocolTCP.Options()
         tcp.noDelay = true
         tcp.connectionTimeout = Int(ceil(timeout))
-        let c = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: Wire.tcpPort)!, using: NWParameters(tls: nil, tcp: tcp))
+        let direct = DirectTransport.viewer(for: host)
+        let c = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: Wire.tcpPort)!, using: direct?.tcp(tcp) ?? NWParameters(tls: nil, tcp: tcp))
         let parser = MessageParser()
         var done = false
         let started = Date()

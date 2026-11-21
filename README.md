@@ -1,3 +1,8 @@
+> **Wisp Direct** is a local build for authenticated connections over Thunderbolt
+> Bridge or a LAN. For provisioning and how to connect without Tailscale, see
+> [Wisp Direct: Thunderbolt Bridge and LAN](docs/multi-window.md#wisp-direct-thunderbolt-bridge-and-lan).
+> The guide below describes the upstream Wisp release.
+
 <p align="center">
   <img src="docs/images/banner.svg" alt="Wisp: apps from your other Mac, right here." width="100%">
 </p>

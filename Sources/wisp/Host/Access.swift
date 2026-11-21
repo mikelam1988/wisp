@@ -6,21 +6,17 @@ import WispCommon
 /// Who may connect to the host. Tailscale is the transport security and tailnet membership the access
 /// control; on top of that, an optional allow-list of tailnet users (by login name), checked with
 /// Tailscale's whois for each connection. Loopback is always allowed (the synthetic tests, a viewer on
-/// the same Mac); other non-Tailscale addresses (LAN) only if `allowLAN` is on.
+/// the same Mac). Direct connections use their own authenticated listeners.
 struct AccessPolicy: Equatable {
     /// Tailnet login names (e.g. "alex@example.com"), compared case-insensitively. Empty: anyone on the tailnet.
     var allowedViewers: [String] = []
-    /// Accept connections from addresses outside Tailscale (a LAN). Off by default: those aren't encrypted.
-    var allowLAN = false
 
     static let allowedViewersKey = "allowedViewers"
-    static let allowLANKey = "allowLAN"
 
     /// What the settings say now (the host reads it for every connection, so edits apply at once).
     static func fromDefaults() -> AccessPolicy {
         let d = Brand.defaults
-        return AccessPolicy(allowedViewers: (d.stringArray(forKey: allowedViewersKey) ?? []).filter { !$0.isEmpty },
-                            allowLAN: d.bool(forKey: allowLANKey))
+        return AccessPolicy(allowedViewers: (d.stringArray(forKey: allowedViewersKey) ?? []).filter { !$0.isEmpty })
     }
 
     func allows(login: String) -> Bool {
@@ -36,11 +32,11 @@ struct PeerIdentity: Equatable {
     /// From Tailscale's whois (tailnet connections that could be identified).
     var tailnet: TailnetIdentity?
 
-    /// "Alex Doe · alex-mbp", "this Mac (loopback)", "192.168.1.20 (LAN)".
+    /// "Alex Doe · alex-mbp", "this Mac (loopback)", "192.168.1.20 (direct)".
     var label: String {
         switch kind {
         case .loopback: "this Mac (\(address))"
-        case .lan: "\(address) (outside Tailscale)"
+        case .lan: "\(address) (direct)"
         case .tailnet: tailnet.map(\.label) ?? "\(address) (unidentified)"
         }
     }
@@ -85,13 +81,12 @@ final class AccessControl {
 
     private func decide(_ ip: String) -> AccessDecision {
         let p = policy()
-        Log.debug(.access, "deciding on \(ip): allow-list \(p.allowedViewers.isEmpty ? "empty (anyone on the tailnet)" : "of \(p.allowedViewers.count)"), LAN \(p.allowLAN ? "allowed" : "refused")")
+        Log.debug(.access, "deciding on \(ip): allow-list \(p.allowedViewers.isEmpty ? "empty (anyone on the tailnet)" : "of \(p.allowedViewers.count)")")
         if Tailnet.isLoopback(ip) { return .allow(PeerIdentity(kind: .loopback, address: ip)) }
         guard Tailnet.isTailscaleAddress(ip) else {
             let id = PeerIdentity(kind: .lan, address: ip)
-            if p.allowLAN { return .allow(id) }
-            Log.info(.access, "\(ip) isn't a Tailscale or loopback address and LAN connections are off")
-            return .refuse("\(hostName) only accepts connections over Tailscale. Connect to its Tailscale name or 100.x address "
+            Log.info(.access, "\(ip) isn't a Tailscale or loopback address")
+            return .refuse("\(hostName) has not enabled authenticated direct connections. Connect to its Tailscale name or 100.x address "
                            + "(both Macs must be on the same tailnet).", id)
         }
         let (who, error) = whois(ip)

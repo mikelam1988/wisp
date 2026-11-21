@@ -155,8 +155,9 @@ WISP_TAILSCALE=cli wisp tailnet # skip the LocalAPI: test the `tailscale` CLI fa
 
 Access checks over loopback: loopback is always allowed, so test a refusal from this Mac's **LAN**
 address (`ipconfig getifaddr en0`): `wisp tailnet probe <lan ip>` says "Sharing · not allowed for
-you" and `wisp view <lan ip> --windows` prints the host's reason; `wisp send --allow-lan` lets it
-in. The allow-list (`--allow <login>`) needs a second device on the tailnet: connecting to this
+you" and `wisp view <lan ip> --windows` prints the host's reason. For the authenticated
+direct mode, use [Wisp Direct provisioning](multi-window.md#wisp-direct-thunderbolt-bridge-and-lan).
+The allow-list (`--allow <login>`) needs a second device on the tailnet: connecting to this
 Mac's own 100.x address from this Mac doesn't go through Tailscale. Don't probe other people's
 Macs from a test.
 

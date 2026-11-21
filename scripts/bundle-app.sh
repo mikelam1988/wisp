@@ -140,6 +140,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.productivity</string>
   <key>NSHighResolutionCapable</key><true/>
+  <key>NSLocalNetworkUsageDescription</key><string>Connect to your paired Mac over your local network.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>LSUIElement</key><true/>
   <key>NSHumanReadableCopyright</key><string>$BRAND_COPYRIGHT</string>

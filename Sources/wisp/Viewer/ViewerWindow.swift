@@ -93,11 +93,11 @@ final class RemoteView: NSView {
 
     /// Rounded corners like any window, except in full screen (black bars around the letterboxed video).
     /// In a window, area the remote hasn't drawn yet shows the window background.
-    /// A thin teal frame (the icon's teal) marking the window as remote, for people who don't watch
-    /// the Dock: full strength while key, faded otherwise, none in full screen. Defaults key
+    /// A thin rose-pink frame marking the window as remote: full strength while key, faded
+    /// otherwise, none in full screen. Defaults key
     /// `outlineRemoteWindows` (on unless set to false).
     private let outline = CALayer()
-    static let outlineColor = NSColor(srgbRed: 0.17, green: 0.78, blue: 0.72, alpha: 1)
+    private static let outlineColor = NSColor(srgbRed: 235.0 / 255, green: 112.0 / 255, blue: 147.0 / 255, alpha: 1)
 
     func updateOutline() {
         CATransaction.begin()

@@ -51,21 +51,19 @@ final class HostModel {
     var screenLocked = false
     /// Where viewers connect to: this Mac's tailnet name and addresses.
     var addresses: [String] = tailscaleAddresses()
+    var directSharing = false
 
     @ObservationIgnored var chooseWindow: () -> Void = {}
     @ObservationIgnored var disconnectViewer: () -> Void = {}
     @ObservationIgnored var stopSharing: () -> Void = {}
 }
 
-/// The allow-list and the LAN switch, read from and written to the settings (AccessPolicy reads them
+/// The tailnet allow-list, read from and written to the settings (AccessPolicy reads them
 /// for every connection, so changes apply to the next one). Main queue.
 @Observable
 final class AccessSettings {
     var allowed: [String] = AccessPolicy.fromDefaults().allowedViewers {
         didSet { Brand.defaults.set(allowed, forKey: AccessPolicy.allowedViewersKey) }
-    }
-    var allowLAN: Bool = AccessPolicy.fromDefaults().allowLAN {
-        didSet { Brand.defaults.set(allowLAN, forKey: AccessPolicy.allowLANKey) }
     }
     /// The tailnet's users (login, display name), for "Add from Tailnet".
     var users: [(login: String, name: String)] = []
@@ -157,9 +155,11 @@ final class HostController: NSObject, NSWindowDelegate, SCContentSharingPickerOb
         h.onShareChanged = { [weak self] _ in self?.refresh() }
         do {
             try h.start()
+            model.directSharing = h.server.directAddresses != nil
+            if let addresses = h.server.directAddresses { model.addresses = addresses }
             model.listening = true
             model.error = nil
-            Log.info(.host, "sharing: viewers on your tailnet can connect to \(model.addresses.isEmpty ? "this Mac" : model.addresses.joined(separator: ", ")); "
+            Log.info(.host, "sharing: viewers can connect to \(model.addresses.isEmpty ? "this Mac" : model.addresses.joined(separator: ", ")); "
                      + "\(h.maxStreams) windows at most; \(Diagnostics.permissionsLine)")
         } catch {
             core = nil
@@ -174,8 +174,10 @@ final class HostController: NSObject, NSWindowDelegate, SCContentSharingPickerOb
             Log.error(.host, "could not start sharing: \(error.localizedDescription)")
         }
         if timer == nil { timer = every(1) { [weak self] in self?.refresh() } }
-        access.loadUsers()
-        loadTailnetName()
+        if !model.directSharing {
+            access.loadUsers()
+            loadTailnetName()
+        }
         refresh()
     }
 
@@ -442,6 +444,14 @@ struct HostWindowView: View {
 struct SharingPane: View {
     @Bindable var model: HostModel
 
+    private var viewerAddressSummary: String {
+        let addressList = model.addresses.joined(separator: " or ")
+        if model.directSharing {
+            return addressList.isEmpty ? "Waiting for a configured direct viewer." : "Direct connection at \(addressList)."
+        }
+        return addressList.isEmpty ? "Tailscale is unavailable." : "Viewers on your tailnet connect to \(addressList)."
+    }
+
     var body: some View {
         Form {
             if let error = model.error {
@@ -467,9 +477,7 @@ struct SharingPane: View {
                             .frame(width: 32)
                         VStack(alignment: .leading, spacing: 2) {
                             Text(model.listening ? "No one is connected" : "Not sharing").font(.body.weight(.medium))
-                            Text(model.addresses.isEmpty
-                                 ? "Tailscale isn't running on this Mac, so viewers can't reach it."
-                                 : "Viewers on your tailnet connect to \(model.addresses.joined(separator: " or ")).")
+                            Text(viewerAddressSummary)
                                 .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
                         }
                     }
@@ -651,7 +659,7 @@ struct WarningRow: View {
     }
 }
 
-/// The allow-list: tailnet logins that may connect (empty: anyone on the tailnet), and the LAN switch.
+/// The allow-list of tailnet logins (empty: anyone on the tailnet).
 struct AllowListEditor: View {
     @Bindable var access: AccessSettings
     @State private var newLogin = ""
@@ -695,10 +703,8 @@ struct AllowListEditor: View {
             Text("Empty: anyone on your tailnet can connect (Tailscale's own access controls still apply). Otherwise only these people, by their Tailscale login; anyone else is refused and told why. Applies to the next connection.")
                 .font(.caption).foregroundStyle(.secondary)
         }
-        Section {
-            Toggle("Allow connections from outside Tailscale", isOn: $access.allowLAN)
-        } footer: {
-            Text("Off by default: \(Brand.name) has no encryption of its own, so outside Tailscale its traffic isn't encrypted and nobody can be identified. Connections from this Mac itself are always allowed.")
+        Section("Direct connections") {
+            Text("Direct sharing uses a preconfigured key. The Tailscale allow-list applies only while sharing over Tailscale.")
                 .font(.caption).foregroundStyle(.secondary)
         }
         .onAppear { if access.users.isEmpty { access.loadUsers() } }

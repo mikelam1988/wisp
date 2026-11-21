@@ -200,6 +200,11 @@ final class Host {
         self.opts = opts
         server = Server(paceMbps: opts.paceMbps, fecGroup: opts.fec)
         let main = DispatchQueue.main
+        server.hostFeatures |= Wire.Feature.applicationLauncher
+        server.onAppRequest = { [weak server] id, app, connection in
+            guard let server else { return }
+            ApplicationLauncher.handle(id: id, app: app, server: server, connection: connection)
+        }
         if opts.clipboard {
             let server = server
             let cb = ClipboardSync(side: .host) { d, done in server.sendControl(d, done: done) }

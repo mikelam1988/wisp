@@ -149,6 +149,7 @@ struct SharingSettings: View {
 struct ViewingSettings: View {
     @AppStorage(Prefs.phantomsKey, store: store) private var phantoms = true
     @AppStorage(Prefs.reconnectKey, store: store) private var reconnect = false
+    @AppStorage(Prefs.keepDockIconKey, store: store) private var keepDockIcon = false
     @AppStorage("outlineRemoteWindows", store: store) private var outline = true
     @AppStorage(ClipboardSync.viewerKey, store: store) private var shareClipboard = true
 
@@ -157,10 +158,12 @@ struct ViewingSettings: View {
             Section {
                 Toggle("Open each remote app as an app of its own", isOn: $phantoms)
                 Toggle("Reconnect to the last Mac when \(Brand.name) opens", isOn: $reconnect)
-                Toggle("Outline remote windows in teal", isOn: $outline)
+                Toggle("Keep remote app icons in the Dock after closing", isOn: $keepDockIcon)
+                    .disabled(!phantoms)
+                Toggle("Outline remote windows", isOn: $outline)
                 Toggle("Share clipboard with remote Macs", isOn: $shareClipboard)
             } footer: {
-                Text("Remote apps of their own (phantom apps) get a Dock icon, ⌘Tab and their own mirrored menu bar. Off: remote windows open in \(Brand.name) itself. Applies to the next connection. The teal outline marks every remote window, so it's clear which windows aren't on this Mac. The clipboard (text, images; not files or passwords from a password manager) goes both ways while connected, if the other Mac shares it too; this applies at once.")
+                Text("Remote apps of their own (phantom apps) get a Dock icon, ⌘Tab and their own mirrored menu bar. Off: remote windows open in \(Brand.name) itself. Applies to the next connection. The outline marks every remote window, so it's clear which windows aren't on this Mac. The clipboard (text, images; not files or passwords from a password manager) goes both ways while connected, if the other Mac shares it too; this applies at once.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }
@@ -235,7 +238,7 @@ struct WelcomeView: View {
                     Text("Use apps on another Mac as if they were on this one.").font(.callout).foregroundStyle(.secondary)
                 }
             }
-            Text("\(Brand.name) lives in the menu bar. Its menu lists the Macs on your tailnet: choose one that's sharing to see its windows, then a window to open it here.")
+            Text("\(Brand.name) lives in the menu bar. Choose a configured Mac or enter its address, then choose a window to open here.")
                 .font(.callout).fixedSize(horizontal: false, vertical: true)
             Text("To use this Mac from another one, share it.")
                 .font(.callout).foregroundStyle(.secondary)

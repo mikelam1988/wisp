@@ -47,13 +47,15 @@ public enum Wire {
         /// Clipboard sync (the clipboard* messages). Sent in hello by a viewer and in helloAck by a host
         /// that can sync; each side sends clipboard messages only to a peer that announced it.
         public static let clipboard: UInt32 = 1 << 1
+        public static let applicationLauncher: UInt32 = 1 << 2
 
         /// "0x1 (followsNewWindows)", for the log.
         public static func describe(_ bits: UInt32) -> String {
             var names: [String] = []
             if bits & followsNewWindows != 0 { names.append("followsNewWindows") }
             if bits & clipboard != 0 { names.append("clipboard") }
-            let unknown = bits & ~(followsNewWindows | clipboard)
+            if bits & applicationLauncher != 0 { names.append("applicationLauncher") }
+            let unknown = bits & ~(followsNewWindows | clipboard | applicationLauncher)
             if unknown != 0 { names.append("unknown 0x\(String(unknown, radix: 16))") }
             return "0x\(String(bits, radix: 16))" + (names.isEmpty ? "" : " (\(names.joined(separator: ", ")))")
         }
@@ -136,6 +138,8 @@ public enum MsgType: UInt8 {
                               // lists none of that app. The host sends the app a reopen event, as a Dock click there
                               // would (launching it if it isn't running); with followsNewWindows its new window then
                               // opens as a stream by itself. An older host ignores it.
+    case appCatalogRequest = 25 // u32 request ID
+    case launchApplication = 26 // u32 request ID, str app catalog ID
     // Clipboard sync, both ways (only to a peer whose hello/helloAck has Wire.Feature.clipboard; see
     // Sources/wisp/Clipboard.swift). The same three messages host -> viewer are 130, 131 and 132.
     case clipboardBegin = 30  // u32 id, u32 totalBytes, u8 n, n x (str UTI, u32 bytes): a new clipboard (one item's
@@ -171,6 +175,8 @@ public enum MsgType: UInt8 {
     case newWindowHeld = 115  // u32 windowID, str appKey, str appName, u8 open, u8 max: an app the viewer is showing
                               // opened a new window, which isn't streamed because `open` windows already are (the
                               // limit, `max`). It opens by itself once a stream closes. Only with followsNewWindows.
+    case appCatalogEntry = 116 // u32 request ID, str app ID, str name; ID alone ends the catalog
+    case appLaunchResult = 117 // u32 request ID, u32 window ID (0 if none), str status
     case hostClipboardBegin = 130 // as clipboardBegin, host -> viewer
     case hostClipboardChunk = 131 // as clipboardChunk
     case hostClipboardState = 132 // as clipboardState

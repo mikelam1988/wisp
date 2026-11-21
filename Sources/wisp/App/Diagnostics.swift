@@ -53,7 +53,7 @@ enum Diagnostics {
         let d = Brand.defaults
         var out: [String] = []
         var unset: [String] = []
-        for key in [Prefs.phantomsKey, Prefs.reconnectKey, Prefs.shareAtLaunchKey, AccessPolicy.allowLANKey, Log.verboseKey,
+        for key in [Prefs.phantomsKey, Prefs.reconnectKey, Prefs.shareAtLaunchKey, Log.verboseKey,
                     "kbps", "fps", "scale", "codec", "refine", "paceMbps", "fec", "virtualDisplay", "maxStreams",
                     ClipboardSync.viewerKey, ClipboardSync.hostKey, ClipboardSync.maxBytesKey] {
             if let v = d.object(forKey: key) { out.append("\(key) = \(v)") } else { unset.append(key) }

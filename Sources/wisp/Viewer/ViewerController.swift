@@ -42,6 +42,8 @@ final class ViewerSession: WindowOwner {
     private var ready = false
     private(set) var hub: PhantomHub?
     private(set) var windowList: [RemoteWindow]?
+    private(set) var supportsApplicationLauncher = false
+    private var appPicker: ApplicationPicker?
     /// Streams whose app isn't known yet (an older host): waiting for the window list.
     private var unplaced: [RemoteStream] = []
 
@@ -70,6 +72,11 @@ final class ViewerSession: WindowOwner {
             self?.ready = true
             self?.setStatus(nil)
             self?.client.openStream(windowID: 0) // the window the host shares
+        }
+        client.onAppLauncherAvailable = { [weak self] in self?.supportsApplicationLauncher = true }
+        client.onAppCatalogEntry = { [weak self] id, app in self?.appPicker?.receive(app, request: id) }
+        client.onAppLaunchResult = { [weak self] id, window, status in
+            self?.appPicker?.launched(window, status: status, request: id)
         }
         client.onDisconnect = { [weak self] msg in self?.disconnected(msg) }
         client.onHostStatus = { [weak self] s in
@@ -128,6 +135,16 @@ final class ViewerSession: WindowOwner {
     func isOpen(_ id: UInt32) -> Bool {
         if let hub { return hub.isOpen(windowID: id) }
         return controllers.contains { $0.stream?.windowID == id }
+    }
+
+    func chooseApplication(on hostLabel: String) {
+        guard isConnected, supportsApplicationLauncher else { return }
+        if appPicker == nil {
+            appPicker = ApplicationPicker(hostLabel: hostLabel, client: client) { [weak self] window in
+                self?.open(windowID: window)
+            }
+        }
+        appPicker?.show()
     }
 
     /// The menu's path: host window `id` in a window of its own, or its window to the front if it has one.
@@ -230,6 +247,7 @@ final class ViewerSession: WindowOwner {
     private var waitingGiveUp: DispatchWorkItem?
 
     private func disconnected(_ msg: String) {
+        appPicker?.close()
         controllers.forEach { $0.setConnection(msg) }
         guard let hub else { return }
         if !ready, msg.hasPrefix("waiting") {
@@ -241,8 +259,10 @@ final class ViewerSession: WindowOwner {
                     guard let self, !ready, !stopped else { return }
                     Log.warning(.viewer, "giving up on \(hostName) after 15 s of waiting: \(msg)")
                     stop()
-                    onClose?("Couldn't reach \(hostName) within 15 seconds (\(msg.replacingOccurrences(of: "waiting: ", with: ""))). "
-                             + "Check that Tailscale is connected on both Macs, or connect to its 100.x address.")
+                    let help = client.usesDirectTransport
+                        ? "Check Local Network permission and the configured Thunderbolt or LAN address, and make sure the other Mac is sharing."
+                        : "Check that Tailscale is connected on both Macs, or connect to its 100.x address."
+                    onClose?("Couldn't reach \(hostName) within 15 seconds (\(msg.replacingOccurrences(of: "waiting: ", with: ""))). " + help)
                 }
                 waitingGiveUp = item
                 DispatchQueue.main.asyncAfter(deadline: .now() + 15, execute: item)
@@ -280,6 +300,7 @@ final class ViewerSession: WindowOwner {
     }
 
     func stop() {
+        appPicker?.close()
         guard !stopped else { return }
         stopped = true
         statsTimer?.invalidate()

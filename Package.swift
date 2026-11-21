@@ -11,7 +11,8 @@ let package = Package(
         .target(name: "Tailnet"),
         // Header-only interface to Apple's private CGVirtualDisplay classes (they live in CoreGraphics).
         .target(name: "CGVirtualDisplayPrivate", linkerSettings: [.linkedFramework("CoreGraphics")]),
-        .executableTarget(name: "wisp", dependencies: ["WispCommon", "Tailnet", "CGVirtualDisplayPrivate"]),
+        .target(name: "WispDirectTLS", linkerSettings: [.linkedFramework("Security")]),
+        .executableTarget(name: "wisp", dependencies: ["WispCommon", "Tailnet", "CGVirtualDisplayPrivate", "WispDirectTLS"]),
         // The end-to-end test's host-side app (scripts/bundle-probe.sh makes WispProbe.app; docs/testing.md).
         .executableTarget(name: "WispProbe", dependencies: ["WispCommon"]),
     ]

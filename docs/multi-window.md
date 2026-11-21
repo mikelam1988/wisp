@@ -908,3 +908,48 @@ harmless, and the soak over the real link.
 - Whether a headless host makes several virtual displays reliably (§8.1). Non-overlapping layout (§3) depends on them, and BetterDisplay's virtual screens survive reboots, but `CGVirtualDisplay` is private.
 - `_AXUIElementGetWindow` is private API. It has been stable for years, but a fallback is needed (§2.5).
 - Phantom ⌘Q is "stop viewing and quit the phantom" (§9.5); quitting the remote app is the separate, confirmed "Quit <App> on <host>…" (§10.3). Whether people find that split natural needs real users.
+
+## Wisp Direct: Thunderbolt Bridge and LAN
+
+A provisioned host uses TLS 1.2 on TCP 7878 and DTLS 1.2 on UDP 7879. Both
+channels authenticate with a 32-byte random secret, with separate keys derived
+by HKDF. The UDP handshake must succeed before Wisp reads a video hello, which
+must match the TCP session and viewer IP. The configured host never falls back
+to the cleartext Wisp protocol. Without a direct host configuration, the
+upstream Tailscale and loopback paths remain available.
+
+Put `direct-connection.json` in each user's
+`~/Library/Application Support/Wisp Direct/`, owned by that user with mode
+`0600`. The JSON fields are `share` (true for the host, false for the viewer),
+`addresses` (the host's numeric bridge and LAN addresses), and `key` (the same
+base64-encoded 32 random bytes on both machines). Transfer the file over an
+authenticated channel. Keep the key out of logs and the repository. Restart
+Wisp Direct after editing the configuration. The viewer's menu lists the
+configured addresses, and the host starts listening when window sharing is
+enabled. A provisioned host accepts viewers holding that key.
+
+Verified with an iMac on macOS 15 and a Mac mini on macOS 27. Each path
+(Thunderbolt Bridge and LAN) streamed three synthetic windows concurrently,
+including 1600 × 1000, 1200 × 750, and 800 × 600 frames. The host rejected
+control-channel probes made without a key or with a different key.
+
+### Launching an app on the host
+
+The connected viewer offers **Launch App…** when the host advertises the
+application launcher. The host lists bundles in `/Applications` and
+`/System/Applications`, including subfolders such as `Utilities`. System links
+such as Safari are included and duplicate entries for the same bundle are
+merged. Finder is included explicitly from CoreServices. Hidden third-party apps, apps nested inside other bundles, and links
+to other locations are excluded. The host
+checks membership again before opening a selected bundle with LaunchServices.
+Requests carry only a catalog entry ID, without arguments. When the app has
+an on-screen window, the viewer opens it through the existing stream path.
+An app that launches without an on-screen window reports that in the picker.
+
+### Dock icons after the last window closes
+
+By default the proxy becomes an accessory app when its last window closes,
+hiding its running icon from the Dock. It becomes a regular app again when
+a window opens. **Keep remote app icons in the Dock after closing** in
+Viewing settings preserves the running icon until the session ends.
+macOS manages pinned Dock shortcuts separately.

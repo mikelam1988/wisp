@@ -14,6 +14,8 @@ enum Prefs {
     static let lastHostKey = "lastHost", lastHostLabelKey = "lastHostLabel"
     /// Remote windows in phantom apps (default) or in this app.
     static let phantomsKey = "phantoms"
+    /// Leave the remote app's running Dock icon visible after its last window closes.
+    static let keepDockIconKey = "keepDockIconAfterLastWindow"
     /// Connect to the last Mac when the app opens.
     static let reconnectKey = "reconnectAtLaunch"
     /// Start sharing when the app opens (with "Share this Mac at login", the app opens at login).
@@ -42,7 +44,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
         // The host window's log view shows what the file gets (debug lines only with verbose logging).
         Log.hook = { _, _, line in DispatchQueue.main.async { LogStore.shared.append(line) } }
         logLaunch()
-        LegacyMigration.run() // before anything reads the settings
         Log.info(.app, "settings: " + Diagnostics.settingsLines(hash: { Diagnostics.hashLogin($0, me: "") }, environment: false).joined(separator: "; "))
         NSApp.mainMenu = makeMainMenu()
         Updates.shared.start() // before the menu, which offers Check for Updates…

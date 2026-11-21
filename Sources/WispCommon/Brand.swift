@@ -9,13 +9,13 @@ import Foundation
 /// domain, the log and Application Support directories, and the phantom apps' bundle IDs.
 public enum Brand {
     /// Display name: the app bundle (Name.app), menus, windows and messages.
-    public static let name = "Wisp"
+    public static let name = "Wisp Direct"
     /// The command-line name, as used in usage text and messages.
     public static let cli = "wisp"
     /// The app's bundle identifier. Changing it makes macOS treat the app as a new one: Screen
     /// Recording and Accessibility must be granted again, and its defaults start empty. A placeholder
     /// reverse-DNS name: a fork should use a domain it controls.
-    public static let bundleID = "com.pier20.Wisp"
+    public static let bundleID = "local.wisp.Direct"
     /// Copyright line (the app's Info.plist gets it from scripts/brand.env).
     public static let copyright = "Copyright © 2026 the Wisp contributors. GPL-3.0-or-later."
 

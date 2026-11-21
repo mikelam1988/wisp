@@ -100,7 +100,7 @@ Options for `wisp send`; the app reads the same keys from its defaults (e.g.
 | `--no-virtual-display` | (on) | Don't put shared windows on virtual displays; windows may then overlap. Key `virtualDisplay` (bool). |
 | `--max-streams` | 3 | Windows a viewer may stream at once. Key `maxStreams`. |
 | `--allow <login>` | (anyone) | Only this tailnet user may connect; repeat for more. Default: the app's allow-list, key `allowedViewers` (an array; empty = anyone on the tailnet). |
-| `--allow-lan` | (off) | Also accept connections from outside Tailscale (unencrypted, unidentified). Key `allowLAN`. Loopback is always accepted. |
+| Direct connection | (off) | Use a provisioned key for TCP and UDP. See [Wisp Direct](multi-window.md#wisp-direct-thunderbolt-bridge-and-lan). |
 | `--no-clipboard` | (on) | Don't sync the clipboard with the viewer. Key `shareClipboardWithViewers` (bool, read live). `--synthetic` leaves it off unless `--clipboard` or `WISP_PASTEBOARD` is given. |
 
 The viewer's clipboard keys are `shareClipboardWithHosts` and `clipboardMaxBytes` (10 MB).

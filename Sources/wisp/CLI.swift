@@ -13,7 +13,7 @@ usage:
              [--max-streams 3]            how many windows a viewer may stream at once
              [--no-clipboard]             don't sync the clipboard with the viewer (on by default; setting \(ClipboardSync.hostKey))
              [--allow <login>]…           only these tailnet users may connect (default: the app's allow-list; empty = anyone)
-             [--allow-lan]                also accept connections from outside Tailscale (unencrypted; loopback always works)
+             Direct connections use direct-connection.json in the app support folder.
   \(Brand.cli) send --synthetic 1600x1000        test patterns instead of real windows: 3 test windows (no input injected)
                                           (clipboard sync only with --clipboard or WISP_PASTEBOARD=<private pasteboard>)
   \(Brand.cli) view <host>                       view and control the window shared from <host>; its menu bar list opens more
@@ -85,7 +85,6 @@ func runSend(_ arguments: [String]) -> Never {
         case "--no-clipboard": clipboard = false
         case "--clipboard": clipboard = true
         case "--allow": allow.append(next(a))
-        case "--allow-lan": access.allowLAN = true
         case "--synthetic":
             let p = next(a).split(separator: "x").compactMap { Double($0) }
             guard p.count == 2 else { fail(usage) }
@@ -100,8 +99,7 @@ func runSend(_ arguments: [String]) -> Never {
     opts.clipboard = clipboard ?? (synthetic == nil || ClipboardSync.isTestPasteboard)
     let host = Host(opts: opts)
     host.server.access.policy = { access }
-    log((access.allowedViewers.isEmpty ? "access: anyone on the tailnet" : "access: only \(access.allowedViewers.joined(separator: ", "))")
-        + (access.allowLAN ? ", and connections from outside Tailscale" : ""))
+    log(access.allowedViewers.isEmpty ? "Tailscale access: anyone on the tailnet" : "Tailscale access: only \(access.allowedViewers.joined(separator: ", "))")
     Task { @MainActor in
         if let synthetic {
             host.shareSynthetic(size: synthetic)

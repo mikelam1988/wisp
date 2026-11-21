@@ -41,6 +41,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     let menu = NSMenu()
     let discovery = TailnetDiscovery()
     private weak var actions: StatusMenuActions?
+    private let direct = try? DirectTransport.load()
     private let header = HeaderView()
     private lazy var headerItem: NSMenuItem = {
         let mi = NSMenuItem()
@@ -65,7 +66,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         item.menu = menu
         header.onToggle = { [weak self] on in self?.toggle(on) }
         discovery.onChange = { [weak self] in self?.rebuild() }
-        discovery.refresh()
+        if direct == nil { discovery.refresh() }
         rebuild()
         if dumpPath != nil { dumpTimer = every(2) { [weak self] in self?.rebuild() } } // keep the dump current
     }
@@ -76,7 +77,7 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         isOpen = true
         actions?.session?.client.requestWindowList() // titles change: refreshed in place when the answer comes
-        discovery.start()
+        if direct == nil { discovery.start() }
         probeConnectedHost()
         rebuild()
         // The latency in the header, live while the menu is open (common modes: the menu is tracking).
@@ -150,6 +151,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         if let s = session, s.isConnected {
             menu.addItem(.separator())
             menu.addItem(.sectionHeader(title: "Windows"))
+            if s.supportsApplicationLauncher {
+                let launch = NSMenuItem(title: "Launch App…", action: #selector(chooseApplication), keyEquivalent: "")
+                launch.target = self
+                launch.image = NSImage(systemSymbolName: "square.grid.2x2", accessibilityDescription: nil)
+                menu.addItem(launch)
+            }
             if let list = s.windowList {
                 if list.isEmpty { menu.addItem(note("\(label(for: s.hostName)) has no windows to share")) }
                 for w in list where DemoWindows.shows(w.entry.appName) {
@@ -182,17 +189,18 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
         // The other Macs on the tailnet.
         menu.addItem(.separator())
-        menu.addItem(.sectionHeader(title: "Other Macs on your tailnet"))
         let current = session?.hostName
-        let others = discovery.macs.filter { current == nil || discovery.mac(matching: current!)?.peer.address != $0.peer.address }
-        if let error = discovery.error {
-            menu.addItem(note(error, wrap: true))
-        } else if !discovery.loaded {
-            menu.addItem(note("Looking…"))
-        } else if others.isEmpty {
-            menu.addItem(note("No other Macs on your tailnet"))
+        if let direct, !direct.share {
+            menu.addItem(.sectionHeader(title: "Direct connections"))
+            for address in direct.addresses where address != current {
+                let entry = NSMenuItem(title: address, action: #selector(connectDirect(_:)), keyEquivalent: "")
+                entry.target = self
+                entry.representedObject = address
+                menu.addItem(entry)
+            }
+        } else if direct == nil {
+            addTailnetDevices(excluding: current)
         }
-        for m in others { menu.addItem(macItem(m)) }
         let other = NSMenuItem(title: "Connect to Address…", action: #selector(connectToAddress), keyEquivalent: "")
         other.target = self
         menu.addItem(other)
@@ -229,6 +237,24 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit \(Brand.name)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         dump()
+    }
+
+    private func addTailnetDevices(excluding current: String?) {
+        menu.addItem(.sectionHeader(title: "Other Macs on your tailnet"))
+        let others = discovery.macs.filter { current == nil || discovery.mac(matching: current!)?.peer.address != $0.peer.address }
+        if let error = discovery.error {
+            menu.addItem(note(error, wrap: true))
+        } else if !discovery.loaded {
+            menu.addItem(note("Looking…"))
+        } else if others.isEmpty {
+            menu.addItem(note("No other Macs on your tailnet"))
+        }
+        for m in others { menu.addItem(macItem(m)) }
+    }
+
+    @objc private func connectDirect(_ sender: NSMenuItem) {
+        guard let address = sender.representedObject as? String else { return }
+        actions?.connect(to: address, label: address)
     }
 
     private func macItem(_ m: TailnetDiscovery.Mac) -> NSMenuItem {
@@ -293,6 +319,11 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func chooseWindow(_ sender: NSMenuItem) { actions?.session?.open(windowID: UInt32(sender.tag)) }
 
+    @objc private func chooseApplication() {
+        guard let session = actions?.session else { return }
+        session.chooseApplication(on: label(for: session.hostName))
+    }
+
     @objc private func connectToMac(_ sender: NSMenuItem) {
         guard let p = sender.representedObject as? TailnetPeer else { return }
         Log.info(.app, "menu: connect to \(p.shortName) (\(p.dnsName.isEmpty ? "no MagicDNS name" : p.dnsName)) at \(p.connectAddress)")
@@ -302,9 +333,9 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
     @objc private func connectToAddress() {
         let a = NSAlert()
         a.messageText = "Connect to a Mac"
-        a.informativeText = "Its Tailscale name or address (the host window on that Mac shows it)."
+        a.informativeText = "Enter a configured Thunderbolt or LAN address, or a Tailscale name."
         let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 24))
-        field.placeholderString = "e.g. studio-mac or 100.101.102.103"
+        field.placeholderString = "e.g. 169.254.10.20 or 192.168.1.20"
         field.stringValue = Prefs.lastHost ?? ""
         a.accessoryView = field
         a.addButton(withTitle: "Connect")

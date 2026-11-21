@@ -953,3 +953,16 @@ hiding its running icon from the Dock. It becomes a regular app again when
 a window opens. **Keep remote app icons in the Dock after closing** in
 Viewing settings preserves the running icon until the session ends.
 macOS manages pinned Dock shortcuts separately.
+
+### Lock Screen Settings popup menus
+
+On macOS 15 the Lock Screen pane's popup menus belong to its ExtensionKit
+process, whose responsible PID is its own. The panel tracker accepts that
+extension's popup-level window when it overlaps a recently operated System
+Settings stream. The filter includes that menu through its owner, and the
+input tracker treats the menu as belonging to the same stream. The extra
+capture and input entries are removed when the popup closes.
+
+On its dedicated virtual display, System Settings is aligned to the right
+edge so macOS keeps trailing menus inside the streamed area. Without a
+dedicated display, menus can still be clipped by the parent window crop.

@@ -85,13 +85,16 @@ final class StreamPanel {
     let owner: String
     /// What it is: "open/save panel", "dialog", "Quick Look preview service window", …
     let kind: String
+    let isMenu: Bool
     var frame: CGRect
     let since = Date()
     /// Where we last put it (a panel larger than the window stays outside it; don't move it again).
     var placed: CGRect?
     var moves = 0
-    init(id: CGWindowID, ownerPID: pid_t, owner: String, kind: String, frame: CGRect) {
+    var captureAttempts = 1
+    init(id: CGWindowID, ownerPID: pid_t, owner: String, kind: String, frame: CGRect, isMenu: Bool = false) {
         self.id = id; self.ownerPID = ownerPID; self.owner = owner; self.kind = kind; self.frame = frame
+        self.isMenu = isMenu
     }
     var describe: String { "\(kind) \(id) of \(owner)" }
 }
@@ -100,6 +103,8 @@ final class StreamPanel {
 /// window and keeps WindowTarget.panels up to date. Main queue; its WindowServer and Accessibility
 /// calls only while no virtual display is being added or removed.
 final class PanelTracker {
+    static let settingsApp = "com.apple.systempreferences"
+    private static let lockScreenExtension = "com.apple.Lock-Screen-Settings.extension"
     private enum Verdict { case panel(String), notPanel }
     /// By window ID (never reused while the system runs).
     private var verdicts: [CGWindowID: Verdict] = [:]
@@ -139,8 +144,16 @@ final class PanelTracker {
                   let owner = w[kCGWindowOwnerPID] as? pid_t, owner != me,
                   let b = w[kCGWindowBounds] as? NSDictionary, let frame = CGRect(dictionaryRepresentation: b),
                   frame.width >= 60, frame.height >= 40, (w[kCGWindowAlpha] as? Double ?? 1) > 0 else { continue }
-            // Ordinary, floating and modal-panel levels; not menus (101), pop-ups, tooltips or overlays.
             let layer = w[kCGWindowLayer] as? Int ?? 0
+            if layer == CGWindowLevelForKey(.popUpMenuWindow) {
+                if let (stream, added) = trackSettingsMenu(id, owner: owner, frame: frame, among: live,
+                                                           lastInput: lastInput(Self.settingsApp)) {
+                    present.insert(id)
+                    if added { refresh.insert(stream.pid) }
+                }
+                continue
+            }
+            // Ordinary, floating and modal-panel levels; leave other overlays out.
             guard layer >= 0, layer < 20 else { continue }
             let ownerName = w[kCGWindowOwnerName] as? String ?? "?"
             let app: pid_t
@@ -173,10 +186,41 @@ final class PanelTracker {
             for (id, p) in s.panels where !present.contains(id) {
                 s.panels[id] = nil
                 s.target.panels[id] = nil
+                if p.isMenu { refresh.insert(s.pid) }
                 Log.info(.capture, "panel: \(p.describe) closed after \(String(format: "%.1f", Date().timeIntervalSince(p.since))) s (stream #\(s.id))")
             }
         }
         return refresh
+    }
+
+    /// Lock Screen uses a separate ExtensionKit process whose responsible PID is itself.
+    /// Associate its popup only with a recently operated System Settings window that contains it.
+    /// The menu stays where macOS put it, so selecting its items uses the normal window coordinates.
+    private func trackSettingsMenu(_ id: CGWindowID, owner: pid_t, frame: CGRect,
+                                   among streams: [HostStream],
+                                   lastInput: (stream: UInt16, at: Date)?) -> (HostStream, Bool)? {
+        func overlaps(_ window: CGRect) -> Bool {
+            let intersection = frame.intersection(window)
+            return !intersection.isNull && intersection.width >= 40 && intersection.height >= 24
+        }
+        if let (stream, panel) = tracked(id, in: streams), panel.isMenu {
+            guard overlaps(stream.current) else { return nil }
+            panel.frame = frame
+            let needsRefresh = !stream.filterHelpers.contains(owner) && panel.captureAttempts < 4
+            if needsRefresh { panel.captureAttempts += 1 }
+            return (stream, needsRefresh)
+        }
+        guard let lastInput, Date().timeIntervalSince(lastInput.at) < 2,
+              let stream = streams.first(where: { $0.id == lastInput.stream && $0.appKey == Self.settingsApp }),
+              overlaps(stream.current),
+              NSRunningApplication(processIdentifier: owner)?.bundleIdentifier == Self.lockScreenExtension
+        else { return nil }
+        let panel = StreamPanel(id: id, ownerPID: owner, owner: "Lock Screen Settings", kind: "popup menu",
+                                frame: frame, isMenu: true)
+        stream.panels[id] = panel
+        stream.target.panels[id] = owner
+        Log.info(.capture, "panel: \(panel.describe) appeared in stream #\(stream.id) at \(Self.rect(frame))")
+        return (stream, true)
     }
 
     /// Whether window `id` is a panel of a streamed app's (by its stream, any stream).

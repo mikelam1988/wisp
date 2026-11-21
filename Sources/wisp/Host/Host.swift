@@ -961,8 +961,19 @@ final class Host {
     private func filter(for s: HostStream, app: SCRunningApplication, display: SCDisplay, content: SCShareableContent) -> SCContentFilter {
         let except = otherStreamedWindows(of: app.processID, than: s)
         let pid = app.processID
-        let helpers = content.applications.filter { $0.processID != pid && responsiblePID(of: $0.processID) == pid }
-        let ids = Set(helpers.map(\.processID))
+        let menus = s.panels.values.filter(\.isMenu)
+        let menuOwners = Set(menus.map(\.ownerPID))
+        let menuIDs = Set(menus.map(\.id))
+        var helpers = content.applications.filter {
+            $0.processID != pid && (menuOwners.contains($0.processID) || responsiblePID(of: $0.processID) == pid)
+        }
+        var ids = Set(helpers.map(\.processID))
+        for window in content.windows where menuIDs.contains(window.windowID) {
+            if let owner = window.owningApplication, menuOwners.contains(owner.processID),
+               ids.insert(owner.processID).inserted {
+                helpers.append(owner)
+            }
+        }
         if ids != s.filterHelpers {
             let added = helpers.filter { !s.filterHelpers.contains($0.processID) }
             if !added.isEmpty {
@@ -970,7 +981,12 @@ final class Host {
             }
             s.filterHelpers = ids
         }
-        return SCContentFilter(display: display, including: [app] + helpers, exceptingWindows: content.windows.filter { except.contains($0.windowID) })
+        let excluded = content.windows.filter { window in
+            if except.contains(window.windowID) { return true }
+            guard let owner = window.owningApplication?.processID, menuOwners.contains(owner) else { return false }
+            return !menuIDs.contains(window.windowID)
+        }
+        return SCContentFilter(display: display, including: [app] + helpers, exceptingWindows: excluded)
     }
 
     /// The windows of app `pid` that other streams show: left out of this stream's capture, so two
@@ -1057,7 +1073,9 @@ final class Host {
         }
         var origin = cur.origin
         if let area {
-            if origin.x + size.width > area.maxX { origin.x = max(area.minX, area.maxX - size.width) }
+            let rightAligned = s.appKey == PanelTracker.settingsApp
+                && s.display?.bounds.contains(CGPoint(x: cur.midX, y: cur.midY)) == true
+            if rightAligned || origin.x + size.width > area.maxX { origin.x = max(area.minX, area.maxX - size.width) }
             if origin.y + size.height > area.maxY { origin.y = max(area.minY, area.maxY - size.height) }
         }
         guard let ax = s.target.ax() else {
@@ -1205,22 +1223,24 @@ final class Host {
         for vd in [s.previousDisplay, s.display].compactMap({ $0 }) { await removeDisplay(vd, of: s) }
     }
 
-    /// Moves `window` to the top-left of the usable part of its stream's display with Accessibility
-    /// (shrunk only if it doesn't fit), then waits for ScreenCaptureKit to see it there. Returns the
+    /// Moves `window` to the top of its own virtual display, then waits for ScreenCaptureKit to see it there.
+    /// System Settings sits on the right so macOS fits its trailing popup menus inside the window. Returns the
     /// window and content as now listed, or nil to carry on where it is.
     @MainActor
     private func place(_ window: SCWindow, pid: pid_t, on vd: VirtualDisplay, for s: HostStream) async -> (SCWindow, SCShareableContent)? {
         let id = window.windowID
         let start = cgBounds(of: id) ?? window.frame
         let area = vd.usableBounds
-        if !area.insetBy(dx: -1, dy: -1).contains(start) {
+        let rightAligned = window.owningApplication?.bundleIdentifier == PanelTracker.settingsApp
+        if !area.insetBy(dx: -1, dy: -1).contains(start) || (rightAligned && abs(start.maxX - area.maxX) > 1) {
             guard let ax = axWindow(pid: pid, frame: start) else {
                 log("could not find window \(id) through Accessibility, so it stays on its display (is Accessibility allowed?)")
                 return nil
             }
             let fits = start.width <= area.width && start.height <= area.height
             let size = fits ? nil : CGSize(width: min(start.width, area.width), height: min(start.height, area.height))
-            if !axSetFrame(ax, origin: area.origin, size: size) {
+            let origin = rightAligned ? CGPoint(x: area.maxX - (size?.width ?? start.width), y: area.minY) : area.origin
+            if !axSetFrame(ax, origin: origin, size: size) {
                 Log.info(.vdisplay, "Accessibility refused to move window \(id) onto virtual display \(vd.displayID)")
             }
             if s.moved == nil { s.moved = start }

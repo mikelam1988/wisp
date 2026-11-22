@@ -1327,6 +1327,7 @@ final class Host {
     @MainActor
     func shutdown() async {
         for t in [statsTimer, rateTimer, sessionTimer, panelTimer] { t?.cancel() }
+        releaseDisplayActivity()
         teardown?.cancel()
         teardown = nil
         server.stop()
@@ -1341,6 +1342,7 @@ final class Host {
 
     /// Stops sharing for good: puts the moved windows back and removes the virtual displays.
     func stop() {
+        releaseDisplayActivity()
         teardown?.cancel()
         clipboard?.disconnected()
         for s in streams.values {
@@ -1357,13 +1359,14 @@ final class Host {
         }
     }
 
-    /// While a viewer is connected, keep this Mac's session from idling into the screen lock, and tell
-    /// the viewer if it is locked anyway (all input then goes to the lock screen).
+    /// Refresh user activity only at the viewer's request, and always report a locked session.
     private func checkSession() {
+        let keepAwake = server.shouldKeepDisplayAwake
+        if !keepAwake { releaseDisplayActivity() }
         guard !DisplayGate.busy else { return } // CGSessionCopyCurrentDictionary asks WindowServer
-        if server.hasViewerConnection, Date().timeIntervalSince(lastActivity) > 20 {
+        if keepAwake, Date().timeIntervalSince(lastActivity) > 20,
+           IOPMAssertionDeclareUserActivity("wisp viewer connected" as CFString, kIOPMUserActiveLocal, &activityID) == kIOReturnSuccess {
             lastActivity = Date()
-            IOPMAssertionDeclareUserActivity("wisp viewer connected" as CFString, kIOPMUserActiveLocal, &activityID)
         }
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         let locked = session?["CGSSessionScreenIsLocked"] as? Bool ?? false
@@ -1373,6 +1376,13 @@ final class Host {
         if lastStatus != "-" || !status.isEmpty { log(status.isEmpty ? "screen unlocked" : "screen is locked: input goes to the lock screen") }
         lastStatus = status
         server.sendControl(message(.hostStatus) { $0.str(status) })
+    }
+
+    private func releaseDisplayActivity() {
+        guard activityID != 0 else { return }
+        IOPMAssertionRelease(activityID)
+        activityID = 0
+        lastActivity = .distantPast
     }
 
     // MARK: Synthetic windows

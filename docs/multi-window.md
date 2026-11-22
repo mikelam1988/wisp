@@ -974,3 +974,14 @@ display when shared or resized. macOS can then open the composer's plus menu
 upward and open the emoji picker leftward. Both were verified on a macOS 15
 host. A picker already open before the window moves can keep its old
 placement until it is closed and reopened.
+
+### Remote display wake preference
+
+Viewing settings can keep the remote Mac’s screen awake while connected.
+The setting is off by default and takes effect on the current connection.
+The viewer sends a session preference over TCP. The host accepts it only
+from the current viewer and clears it when that connection ends or is
+replaced. While enabled, the host refreshes its macOS user-activity
+assertion roughly every 20 seconds. Turning the setting off releases the
+assertion. Both Macs need the updated build for the setting to control
+an existing installation’s host behavior.

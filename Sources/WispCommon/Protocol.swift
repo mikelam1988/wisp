@@ -140,6 +140,7 @@ public enum MsgType: UInt8 {
                               // opens as a stream by itself. An older host ignores it.
     case appCatalogRequest = 25 // u32 request ID
     case launchApplication = 26 // u32 request ID, str app catalog ID
+    case keepHostDisplayAwake = 27 // u8 on (0 or 1), for the current viewer connection
     // Clipboard sync, both ways (only to a peer whose hello/helloAck has Wire.Feature.clipboard; see
     // Sources/wisp/Clipboard.swift). The same three messages host -> viewer are 130, 131 and 132.
     case clipboardBegin = 30  // u32 id, u32 totalBytes, u8 n, n x (str UTI, u32 bytes): a new clipboard (one item's

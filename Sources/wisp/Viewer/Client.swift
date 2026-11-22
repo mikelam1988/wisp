@@ -402,6 +402,10 @@ final class Client {
     /// Any control message, once the host has answered our hello.
     func sendControl(_ d: Data) { q.async { self.sendWhenReady(d) } }
 
+    func setHostDisplayAwake(_ on: Bool) {
+        sendControl(message(.keepHostDisplayAwake) { $0.u8(on ? 1 : 0) })
+    }
+
     /// A control message after the hello exchange (dropped before it, or after the connection ended),
     /// with `done` called once it has left: for bulk data (the clipboard), so it never piles up.
     func sendControl(_ d: Data, done: @escaping () -> Void) {

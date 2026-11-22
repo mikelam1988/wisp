@@ -11,6 +11,7 @@ import WispCommon
 final class SettingsController: NSObject, NSWindowDelegate {
     private var window: NSWindow?
     var onClose: (() -> Void)?
+    var onKeepHostDisplayAwakeChange: ((Bool) -> Void)?
     /// The tailnet's users, for the allow-list's "From Tailnet" menu.
     var tailnetUsers: () -> [(login: String, name: String)] = { [] }
     var isVisible: Bool { window?.isVisible ?? false }
@@ -37,7 +38,9 @@ final class SettingsController: NSObject, NSWindowDelegate {
             tabs.addTabViewItem(item)
         }
         tab("Sharing", "rectangle.on.rectangle", SharingSettings())
-        tab("Viewing", "macwindow.on.rectangle", ViewingSettings())
+        tab("Viewing", "macwindow.on.rectangle", ViewingSettings { [weak self] on in
+            self?.onKeepHostDisplayAwakeChange?(on)
+        })
         tab("Allowed Viewers", "person.2", Form { AllowListEditor(access: access) }.formStyle(.grouped))
         tab("Troubleshooting", "stethoscope", TroubleshootingSettings())
         let w = NSWindow(contentViewController: tabs)
@@ -147,9 +150,11 @@ struct SharingSettings: View {
 }
 
 struct ViewingSettings: View {
+    let onKeepHostDisplayAwakeChange: (Bool) -> Void
     @AppStorage(Prefs.phantomsKey, store: store) private var phantoms = true
     @AppStorage(Prefs.reconnectKey, store: store) private var reconnect = false
     @AppStorage(Prefs.keepDockIconKey, store: store) private var keepDockIcon = false
+    @AppStorage(Prefs.keepHostDisplayAwakeKey, store: store) private var keepHostDisplayAwake = false
     @AppStorage("outlineRemoteWindows", store: store) private var outline = true
     @AppStorage(ClipboardSync.viewerKey, store: store) private var shareClipboard = true
 
@@ -164,6 +169,13 @@ struct ViewingSettings: View {
                 Toggle("Share clipboard with remote Macs", isOn: $shareClipboard)
             } footer: {
                 Text("Remote apps of their own (phantom apps) get a Dock icon, ⌘Tab and their own mirrored menu bar. Off: remote windows open in \(Brand.name) itself. Applies to the next connection. The outline marks every remote window, so it's clear which windows aren't on this Mac. The clipboard (text, images; not files or passwords from a password manager) goes both ways while connected, if the other Mac shares it too; this applies at once.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Keep the remote Mac’s screen awake while connected", isOn: $keepHostDisplayAwake)
+                    .onChange(of: keepHostDisplayAwake) { _, on in onKeepHostDisplayAwakeChange(on) }
+            } footer: {
+                Text("When off, the remote Mac follows its own display and lock settings. Applies to the current connection with an updated remote Mac.")
                     .font(.caption).foregroundStyle(.secondary)
             }
         }

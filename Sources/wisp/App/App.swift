@@ -16,6 +16,7 @@ enum Prefs {
     static let phantomsKey = "phantoms"
     /// Leave the remote app's running Dock icon visible after its last window closes.
     static let keepDockIconKey = "keepDockIconAfterLastWindow"
+    static let keepHostDisplayAwakeKey = "keepHostDisplayAwake"
     /// Connect to the last Mac when the app opens.
     static let reconnectKey = "reconnectAtLaunch"
     /// Start sharing when the app opens (with "Share this Mac at login", the app opens at login).
@@ -170,6 +171,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
         Brand.defaults.set(label, forKey: Prefs.lastHostLabelKey)
         let phantoms = Prefs.usePhantoms
         let v = ViewerSession(host: address, phantoms: phantoms, ownMenu: false)
+        v.client.setHostDisplayAwake(Brand.defaults.bool(forKey: Prefs.keepHostDisplayAwakeKey))
         v.onChange = { [weak self] in self?.statusMenu.sessionChanged() }
         v.onClose = { [weak self, weak v] error in
             guard let self, session === v else { return }
@@ -233,6 +235,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
         if settings == nil {
             let s = SettingsController()
             s.onClose = { [weak self] in self?.updateActivationPolicy() }
+            s.onKeepHostDisplayAwakeChange = { [weak self] on in self?.session?.client.setHostDisplayAwake(on) }
             s.tailnetUsers = { [weak self] in self?.statusMenu.discovery.users ?? [] }
             settings = s
         }

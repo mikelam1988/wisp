@@ -169,6 +169,12 @@ final class Server {
     private var viewerName = ""
     private var viewerSince: Date?
     private var viewerFeatures: UInt32 = 0
+    private var viewerKeepsDisplayAwake = false
+
+    var shouldKeepDisplayAwake: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return viewerKeepsDisplayAwake
+    }
     /// The current viewer lets us open streams for new windows by themselves (Wire.Feature.followsNewWindows).
     var viewerFollowsNewWindows: Bool {
         lock.lock(); defer { lock.unlock() }
@@ -484,6 +490,11 @@ final class Server {
             if let (key, menu) = MenuTree.decodeRequest(p) { onMenuRequest?(key, menu) }
         case .menuPress:
             if let m = MenuPress.decode(p) { onMenuPress?(m) }
+        case .keepHostDisplayAwake:
+            guard p.count == 1, let on = r.u8(), on <= 1 else { return }
+            lock.lock()
+            if viewer === c { viewerKeepsDisplayAwake = on == 1 }
+            lock.unlock()
         case .clipboardBegin, .clipboardChunk, .clipboardState:
             // Only the admitted, current viewer (not a replaced one still sending, not a side channel).
             lock.lock(); let current = viewer === c; lock.unlock()
@@ -499,6 +510,7 @@ final class Server {
         viewerIdentity = who
         viewerName = h.name
         viewerFeatures = h.features
+        viewerKeepsDisplayAwake = false
         viewerSince = Date()
         session = UInt32.random(in: 1 ... .max)
         udpPeer = nil
@@ -526,6 +538,7 @@ final class Server {
         viewerIdentity = nil
         viewerName = ""
         viewerFeatures = 0
+        viewerKeepsDisplayAwake = false
         let peer = udpPeer
         udpPeer = nil
         tx = [:]

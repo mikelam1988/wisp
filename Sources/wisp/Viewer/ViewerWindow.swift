@@ -97,7 +97,7 @@ final class RemoteView: NSView {
     /// otherwise, none in full screen. Defaults key
     /// `outlineRemoteWindows` (on unless set to false).
     private let outline = CALayer()
-    private static let outlineColor = NSColor(srgbRed: 235.0 / 255, green: 112.0 / 255, blue: 147.0 / 255, alpha: 1)
+    static let outlineColor = NSColor(srgbRed: 235.0 / 255, green: 112.0 / 255, blue: 147.0 / 255, alpha: 1)
 
     func updateOutline() {
         CATransaction.begin()
@@ -204,7 +204,7 @@ final class RemoteView: NSView {
         let pts = CGSize(width: px.width / pixelsPerPoint, height: px.height / pixelsPerPoint)
         if isFullScreen {
             video.frame = fit(pts, in: bounds)
-        } else if stretch {
+        } else if stretch || window?.inLiveResize == true {
             video.frame = bounds
         } else {
             video.frame = CGRect(x: 0, y: bounds.maxY - pts.height * scale, width: pts.width * scale, height: pts.height * scale)

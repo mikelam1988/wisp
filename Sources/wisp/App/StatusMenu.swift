@@ -15,6 +15,7 @@ protocol StatusMenuActions: AnyObject {
     func copyDiagnostics()
     /// The viewer session, if connected or connecting.
     var session: ViewerSession? { get }
+    var isReconnecting: Bool { get }
     /// Sharing from this Mac (the host window's host is running), and who is connected to it.
     var sharingSummary: String? { get }
 }
@@ -133,7 +134,8 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
             else { state = "Connected" }
             header.set(title: label(for: s.hostName), subtitle: state, on: true, enabled: true, warning: s.notice != nil)
         } else if let lastHost = Prefs.lastHost {
-            header.set(title: label(for: lastHost), subtitle: "Not connected", on: false, enabled: true, warning: false)
+            let retry = actions?.isReconnecting == true
+            header.set(title: label(for: lastHost), subtitle: retry ? "Reconnecting…" : "Not connected", on: retry, enabled: true, warning: false)
         } else {
             header.set(title: "Not connected", subtitle: "Choose a Mac that's sharing below", on: false, enabled: false, warning: false)
         }

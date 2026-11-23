@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 import AppKit
 import IOKit.pwr_mgt
+import Network
 import ScreenCaptureKit
 import UniformTypeIdentifiers
 import WispCommon
@@ -146,6 +147,7 @@ final class Host {
     private var rateTimer: DispatchSourceTimer?
     private var sessionTimer: DispatchSourceTimer?
     private var lastStatus = ""
+    private let systemPrompts = SystemPromptHost()
     private var lastActivity = Date.distantPast
     private var activityID: IOPMAssertionID = 0
     private var rateScale = 1.0
@@ -213,6 +215,18 @@ final class Host {
             server.onClipboard = { t, p in main.async { cb.receive(t, p) } }
         } else {
             clipboard = nil
+        }
+        server.onSystemPromptAction = { [weak self] action, connection in
+            main.async {
+                guard let self, self.server.isCurrentViewer(connection), self.server.directAddresses != nil else { return }
+                let error = DisplayGate.busy ? "The remote display is changing. Try again shortly." : self.systemPrompts.act(action) {
+                    Task { @MainActor in await self.revealSettingsWindow(to: connection) }
+                }
+                self.server.sendAppReply(message(.hostSystemPromptResult) {
+                    $0.u32(action.id); $0.u32(action.revision); $0.str(error)
+                }, to: connection)
+                self.checkSession()
+            }
         }
         server.onKeyframeRequest = { [weak self] s in main.async { self?.stream(s)?.pipeline.requestKeyframe() } }
         server.onVideoPathOpen = { [weak self] in
@@ -561,7 +575,9 @@ final class Host {
         try server.start()
         server.onViewerReady = { [weak self] in
             DispatchQueue.main.async {
-                self?.lastStatus = "-"; self?.checkSession() // resend current status
+                self?.lastStatus = "-"
+                self?.systemPrompts.reset()
+                self?.checkSession() // resend current status and any visible prompt
                 if let self, let cb = self.clipboard { cb.connected(peerSupports: self.server.viewerSyncsClipboard) }
             }
         }
@@ -1371,11 +1387,43 @@ final class Host {
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         let locked = session?["CGSSessionScreenIsLocked"] as? Bool ?? false
         screenLocked = locked
+        if !isSynthetic, server.hasViewerConnection {
+            let peer = server.promptAppearanceViewer
+            if let prompt = systemPrompts.update(locked: locked, interactive: server.directAddresses != nil, appearance: peer != nil,
+                                                 authorizationLayout: server.viewerSupportsAuthorizationLayout) {
+                if let peer { server.sendAppReply(prompt.encode(), to: peer) }
+                else { server.sendControl(prompt.encode()) }
+            }
+            if !locked, let peer {
+                systemPrompts.refreshImage { [weak self] packet in
+                    guard let self, !self.screenLocked else { return }
+                    self.server.sendAppReply(packet, to: peer)
+                }
+            }
+        }
         let status = locked ? "\(Foundation.Host.current().localizedName ?? "The host")'s screen is locked — unlock it to control the window" : ""
         guard status != lastStatus else { return }
         if lastStatus != "-" || !status.isEmpty { log(status.isEmpty ? "screen unlocked" : "screen is locked: input goes to the lock screen") }
         lastStatus = status
         server.sendControl(message(.hostStatus) { $0.str(status) })
+    }
+
+    /// The original permission button selects the pane. Wait for its window without
+    /// relaunching Settings, which could replace the destination selected by macOS.
+    @MainActor
+    private func revealSettingsWindow(to connection: NWConnection) async {
+        let deadline = ContinuousClock.now + .seconds(12)
+        while ContinuousClock.now < deadline {
+            guard server.isCurrentViewer(connection), !screenLocked else { return }
+            if !DisplayGate.busy, let windows = await Self.windows(for: "following the permission settings button"),
+               let window = windows.first(where: { $0.owningApplication?.bundleIdentifier == "com.apple.systempreferences" }) {
+                server.sendAppReply(message(.hostPromptSettingsWindow) { $0.u32(window.windowID) }, to: connection)
+                Log.info(.host, "permission prompt opened System Settings (window \(window.windowID))")
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(300))
+        }
+        server.sendAppReply(message(.hostPromptSettingsWindow) { $0.u32(0) }, to: connection)
     }
 
     private func releaseDisplayActivity() {

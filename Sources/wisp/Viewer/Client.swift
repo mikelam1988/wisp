@@ -57,6 +57,11 @@ final class Client {
     var onAppCatalogEntry: ((UInt32, RemoteApplication?) -> Void)?
     var onAppLaunchResult: ((UInt32, UInt32, String) -> Void)?
     var onHostStatus: ((String) -> Void)?
+    var onHostSystemPrompt: ((SystemPrompt) -> Void)?
+    private var promptImage = PromptImageTransfer()
+    var onHostSystemPromptImage: ((UInt32, UInt32, Data) -> Void)?
+    var onPromptSettingsWindow: ((UInt32) -> Void)?
+    var onHostSystemPromptResult: ((UInt32, UInt32, String) -> Void)?
     /// Connection trouble; after a failure nothing more arrives.
     var onDisconnect: ((String) -> Void)?
     var onWindowList: (([RemoteWindow]) -> Void)?
@@ -140,6 +145,7 @@ final class Client {
                     send(message(.sideChannel) { $0.u16(Wire.protocolVersion) })
                 } else {
                     var hello = Hello(name: Foundation.Host.current().localizedName ?? "viewer")
+                    hello.features |= Wire.Feature.promptAppearance | Wire.Feature.authorizationLayout
                     if followsNewWindows { hello.features |= Wire.Feature.followsNewWindows }
                     if clipboard != nil { hello.features |= Wire.Feature.clipboard }
                     Log.info(.viewer, "→ hello: protocol \(hello.version), features \(Wire.Feature.describe(hello.features)), name \"\(hello.name)\"")
@@ -368,7 +374,7 @@ final class Client {
         screenObserver = nil
         let cb = clipboard
         DispatchQueue.main.async { cb?.disconnected() }
-        onDisconnect = nil; onWindowList = nil; onHostStatus = nil; onReady = nil
+        onDisconnect = nil; onWindowList = nil; onHostStatus = nil; onHostSystemPrompt = nil; onHostSystemPromptImage = nil; onHostSystemPromptResult = nil; onPromptSettingsWindow = nil; onReady = nil
         onStreamOpened = nil; onStreamClosed = nil; onLargeIcon = nil; onMenuTree = nil
     }
 
@@ -562,6 +568,18 @@ final class Client {
             let s = r.str() ?? ""
             Log.info(.viewer, "← hostStatus: \(s.isEmpty ? "(clear)" : s)")
             main { $0.onHostStatus?(s) }
+        case .hostSystemPrompt:
+            if let prompt = SystemPrompt.decode(p) { main { $0.onHostSystemPrompt?(prompt) } }
+        case .hostSystemPromptImage:
+            if let (id, revision, bytes) = promptImage.receive(p) {
+                main { $0.onHostSystemPromptImage?(id, revision, bytes) }
+            }
+        case .hostPromptSettingsWindow:
+            if let id = r.u32(), r.remaining == 0 { main { $0.onPromptSettingsWindow?(id) } }
+        case .hostSystemPromptResult:
+            if let id = r.u32(), let revision = r.u32(), let error = r.str() {
+                main { $0.onHostSystemPromptResult?(id, revision, error) }
+            }
         case .appIcon:
             if let key = r.str() { icons[key] = r.rest() }
         case .appIconLarge:
@@ -676,6 +694,8 @@ final class Client {
         guard let rtt = latency.rttMin else { return 0.25 }
         return max(0.02, Double(rtt) / 1_000_000 * 1.5 + 0.01)
     }
+
+    fileprivate var hasVideoPath: Bool { lastEchoAt != nil }
 }
 
 /// One stream (a remote window) as the viewer sees it: its own reassembly, repair and decoder, and
@@ -901,7 +921,18 @@ final class RemoteStream: ViewerStream {
     /// Runs every 30 ms: ask for missing packets, and fall back to a keyframe if stuck.
     fileprivate func repair() {
         let now = Date()
-        guard let highest, let client else { return }
+        guard let client else { return }
+        guard let highest else {
+            // The opening keyframe can be lost in full. An idle window may then send nothing else.
+            if client.hasVideoPath, now.timeIntervalSince(lastProgress) >= 2,
+               now.timeIntervalSince(lastKeyRequest) >= 2 {
+                if lastKeyRequest == .distantPast {
+                    Log.info(.viewer, "stream #\(id): no initial video packets; requesting a keyframe")
+                }
+                requestKeyframe()
+            }
+            return
+        }
         let renack = client.renackAfter
 
         for (n, p) in pending where !p.complete {

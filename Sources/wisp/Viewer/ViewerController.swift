@@ -24,6 +24,7 @@ final class ViewerSession: WindowOwner {
     /// The session is over: after the last in-process window closed, Disconnect, or (with the reason)
     /// a connection that never came up in phantom mode.
     var onClose: ((String?) -> Void)?
+    var recoversConnection: () -> Bool = { false }
     private var controllers: [ViewerController] = []
     private var menu: RemoteWindowsMenu?
     private let ownMenu: Bool
@@ -85,6 +86,11 @@ final class ViewerSession: WindowOwner {
         }
         client.onStreamOpened = { [weak self] s in self?.streamOpened(s) }
         client.onStreamClosed = { [weak self] id, wid, reason in self?.streamClosed(id, windowID: wid, reason: reason) }
+        client.onPromptSettingsWindow = { [weak self] window in
+            guard let self, isConnected else { return }
+            if window != 0 { open(windowID: window) }
+            else { setNotice("The remote Mac did not show a shareable System Settings window.") }
+        }
         client.onWindowList = { [weak self] list in self?.received(list) }
         client.onLargeIcon = { [weak self] key, px, png in self?.hub?.largeIcon(key, px: px, png: png) }
         client.onMenuTree = { [weak self] key, msg in self?.hub?.menuTree(key, msg) }
@@ -249,7 +255,8 @@ final class ViewerSession: WindowOwner {
     private func disconnected(_ msg: String) {
         appPicker?.close()
         controllers.forEach { $0.setConnection(msg) }
-        guard let hub else { return }
+        let recover = recoversConnection()
+        guard hub != nil || recover else { return }
         if !ready, msg.hasPrefix("waiting") {
             setStatus("Connecting to \(hostName): \(msg)")
             Log.info(.viewer, "still connecting to \(hostName): \(msg)" + (waitingGiveUp == nil ? "; giving up in 15 s unless it connects" : ""))
@@ -269,16 +276,15 @@ final class ViewerSession: WindowOwner {
             }
             return
         }
-        if !ready {
-            // Never connected: back to the chooser, with the reason.
-            Log.warning(.viewer, "couldn't connect to \(hostName): \(msg)")
+        if !ready || recover {
+            Log.warning(.viewer, "\(ready ? "disconnected from" : "couldn't connect to") \(hostName): \(msg)")
             stop()
             onClose?(msg)
             return
         }
         Log.warning(.viewer, "disconnected from \(hostName): \(msg)")
         setStatus("Disconnected from \(hostName): \(msg)")
-        hub.connection(msg)
+        hub?.connection(msg)
     }
 
     /// A local window closed (it already told the host, if it had to).
@@ -303,6 +309,7 @@ final class ViewerSession: WindowOwner {
         appPicker?.close()
         guard !stopped else { return }
         stopped = true
+        waitingGiveUp?.cancel()
         statsTimer?.invalidate()
         menu?.remove()
         hub?.stop()
@@ -378,22 +385,16 @@ final class ViewerController: NSObject, NSWindowDelegate {
     private var closing = false
     private static var didTestResize = false
 
-    // Resizing both ways. A local resize by the user sends resizeWindow (at most every 50 ms while
-    // dragging, and once at the end); windowInfo says which request the host has applied, so echoes
+    // Resizing both ways. A local resize sends resizeWindow once the drag ends; windowInfo says
+    // which request the host has applied, so echoes
     // of our own requests are told apart from resizes made on the host, which the local window then
     // follows (keeping its top-left corner where it is).
     private var resizable = false
     private var requestSeq: UInt32 = 0
     /// Our newest request the host hasn't settled yet.
     private var pendingResize: (id: UInt32, size: CGSize)?
-    /// The size (remote points) the user's resize asks for, not sent yet.
-    private var wantedSize: CGSize?
-    private var lastResizeSent = Date.distantPast
-    private var resizeTimer: Timer?
     /// We are resizing the window ourselves (to follow the remote): not a request to pass on.
     private var adjusting = false
-    /// The remote ended up at a size other than this window's during a live resize: snap to it at the end.
-    private var snapAfterLiveResize = false
 
     init(session: WindowOwner, stream: ViewerStream?) {
         self.session = session
@@ -423,7 +424,7 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     /// The system's window corner radius (16 pt on macOS 26+, 10 before), so the video's corners match other windows.
-    private static func cornerRadius(of w: NSWindow) -> CGFloat {
+    static func cornerRadius(of w: NSWindow) -> CGFloat {
         let key = "_cornerRadius"
         if w.responds(to: Selector((key))), let r = w.value(forKey: key) as? NSNumber, r.doubleValue > 0 {
             return CGFloat(r.doubleValue)
@@ -536,20 +537,13 @@ final class ViewerController: NSObject, NSWindowDelegate {
         if let p = pendingResize {
             guard !isNewer(p.id, than: rid) else { updateStatus(); return } // the host hasn't got to our latest yet
             pendingResize = nil
-            if wantedSize != nil || resizeTimer != nil { updateStatus(); return } // more of the user's resize is on its way
         } else if isNewer(rid, than: requestSeq) {
             requestSeq = rid // e.g. a reopened stream: carry on from the host's numbering
         }
         // Settled. If the remote isn't the size this window shows, it was resized there, or it clamped
         // our request: follow it, but never in the middle of the user's drag.
-        if first || !sameSize(info.points, localRemoteSize()) {
-            if view.isFullScreen {
-                // Full screen can't change size: the video is letterboxed in it.
-            } else if window.inLiveResize {
-                snapAfterLiveResize = true
-            } else {
-                matchRemote(info.points, place: first)
-            }
+        if !view.isFullScreen, !window.inLiveResize, first || !sameSize(info.points, localRemoteSize()) {
+            matchRemote(info.points, place: first)
         }
         shownSize = info.points
         if first, !window.isVisible { window.makeKeyAndOrderFront(nil); window.makeFirstResponder(view) }
@@ -576,7 +570,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         f.origin = NSPoint(x: old.minX, y: old.maxY - f.height)
         if f.minY < vis.minY { f.origin.y = min(vis.minY, vis.maxY - f.height) }
         if f.maxX > vis.maxX { f.origin.x = max(vis.minX, vis.maxX - f.width) }
-        snapAfterLiveResize = false
         adjusting = true
         window.setFrame(f, display: true)
         if place { session.placeNew(self) }
@@ -603,37 +596,23 @@ final class ViewerController: NSObject, NSWindowDelegate {
     }
 
     func windowDidResize(_ n: Notification) {
-        guard resizable, !adjusting, shownSize != nil else { return }
-        wantedSize = localRemoteSize()
-        let wait = 0.05 - Date().timeIntervalSince(lastResizeSent)
-        if wait <= 0 {
-            sendWantedSize()
-        } else if resizeTimer == nil {
-            let t = Timer(timeInterval: wait, repeats: false) { [weak self] _ in self?.sendWantedSize() }
-            RunLoop.main.add(t, forMode: .common) // fires during the live-resize tracking loop too
-            resizeTimer = t
-        }
+        guard !window.inLiveResize else { return }
+        sendResize()
     }
 
-    private func sendWantedSize() {
-        resizeTimer?.invalidate()
-        resizeTimer = nil
-        guard let want = wantedSize, let stream else { return }
-        wantedSize = nil
+    private func sendResize() {
+        guard resizable, !adjusting, shownSize != nil, let stream else { return }
+        let want = localRemoteSize()
         guard !sameSize(want, pendingResize?.size ?? view.remoteSize) else { return }
         requestSeq &+= 1
         pendingResize = (requestSeq, want)
-        lastResizeSent = Date()
         client.resizeWindow(stream.id, want, id: requestSeq)
-        if !window.inLiveResize { log("asked \(hostName) to resize stream #\(stream.id) to \(Int(want.width))x\(Int(want.height)) pt (#\(requestSeq))") }
+        log("asked \(hostName) to resize stream #\(stream.id) to \(Int(want.width))x\(Int(want.height)) pt (#\(requestSeq))")
     }
 
     func windowDidEndLiveResize(_ n: Notification) {
-        sendWantedSize() // the final size goes out now
-        if snapAfterLiveResize, pendingResize == nil {
-            snapAfterLiveResize = false
-            if !sameSize(view.remoteSize, localRemoteSize()) { matchRemote(view.remoteSize) }
-        }
+        sendResize()
+        view.needsLayout = true
     }
 
     /// This window's own red button: ⌥-click stops viewing (closes this window only), a plain click
@@ -711,7 +690,6 @@ final class ViewerController: NSObject, NSWindowDelegate {
         closing = true
         view.releaseHeldKeys()
         view.stop()
-        resizeTimer?.invalidate()
         noticeTimer?.invalidate()
         if let keyMonitor { NSEvent.removeMonitor(keyMonitor) }
         keyMonitor = nil

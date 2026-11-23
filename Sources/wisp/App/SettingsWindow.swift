@@ -162,7 +162,7 @@ struct ViewingSettings: View {
         Form {
             Section {
                 Toggle("Open each remote app as an app of its own", isOn: $phantoms)
-                Toggle("Reconnect to the last Mac when \(Brand.name) opens", isOn: $reconnect)
+                Toggle("Connect at launch and retry interrupted connections", isOn: $reconnect)
                 Toggle("Keep remote app icons in the Dock after closing", isOn: $keepDockIcon)
                     .disabled(!phantoms)
                 Toggle("Outline remote windows", isOn: $outline)

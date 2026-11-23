@@ -17,8 +17,9 @@ enum Prefs {
     /// Leave the remote app's running Dock icon visible after its last window closes.
     static let keepDockIconKey = "keepDockIconAfterLastWindow"
     static let keepHostDisplayAwakeKey = "keepHostDisplayAwake"
-    /// Connect to the last Mac when the app opens.
+    /// Connect to the last Mac at launch and retry interrupted connections.
     static let reconnectKey = "reconnectAtLaunch"
+    static var reconnectEnabled: Bool { Brand.defaults.bool(forKey: reconnectKey) }
     /// Start sharing when the app opens (with "Share this Mac at login", the app opens at login).
     static let shareAtLaunchKey = "shareAtLaunch"
     /// The welcome popover has been shown.
@@ -37,7 +38,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
     private var host: HostController?
     private var settings: SettingsController?
     private(set) var session: ViewerSession?
+    private var reconnectTimer: Timer?
+    private var reconnectDelay: TimeInterval = 2
+    var isReconnecting: Bool { reconnectTimer != nil }
     private var welcome: NSPopover?
+    private var systemPromptPanel: SystemPromptPanel?
     /// Debug: WISP_OPEN=host,settings,welcome opens those at launch (tests can't click the menu).
     private let testOpen = Set((ProcessInfo.processInfo.environment["WISP_OPEN"] ?? "").split(separator: ",").map(String.init))
 
@@ -55,7 +60,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
         if let i = args.firstIndex(of: "--connect"), i + 1 < args.count {
             // A phantom app opened from the Dock started us, to connect to its host.
             connect(to: args[i + 1], label: args[i + 1])
-        } else if Brand.defaults.bool(forKey: Prefs.reconnectKey), let last = Prefs.lastHost {
+        } else if Prefs.reconnectEnabled, let last = Prefs.lastHost {
             connect(to: last, label: Prefs.lastHostLabel ?? last)
         }
         if Brand.defaults.bool(forKey: Prefs.shareAtLaunchKey) || testOpen.contains("host") {
@@ -158,6 +163,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
     // MARK: Viewer
 
     func connect(to address: String, label: String) {
+        cancelReconnect()
+        startViewerSession(to: address, label: label)
+    }
+
+    private func startViewerSession(to address: String, label: String) {
         if let s = session {
             // Already connected (or connecting) there; a session that lost its host is replaced.
             if s.hostName == address, s.status == nil || s.status!.hasPrefix("Connecting") { return }
@@ -166,19 +176,41 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
             session = nil
             old.onClose = nil
             old.disconnect()
+            systemPromptPanel?.close()
         }
         Brand.defaults.set(address, forKey: Prefs.lastHostKey)
         Brand.defaults.set(label, forKey: Prefs.lastHostLabelKey)
         let phantoms = Prefs.usePhantoms
         let v = ViewerSession(host: address, phantoms: phantoms, ownMenu: false)
         v.client.setHostDisplayAwake(Brand.defaults.bool(forKey: Prefs.keepHostDisplayAwakeKey))
-        v.onChange = { [weak self] in self?.statusMenu.sessionChanged() }
+        v.client.onHostSystemPrompt = { [weak self, weak v] prompt in
+            guard let self, let v, session === v, v.isConnected else { return }
+            showSystemPrompt(prompt, host: label, client: v.client)
+        }
+        v.client.onHostSystemPromptImage = { [weak self, weak v] id, revision, bytes in
+            guard let self, let v, session === v, v.isConnected, let panel = systemPromptPanel,
+                  panel.prompt.id == id, panel.prompt.revision == revision else { return }
+            panel.receiveImage(bytes)
+        }
+        v.client.onHostSystemPromptResult = { [weak self, weak v] id, revision, error in
+            guard let self, let v, session === v, v.isConnected, let panel = systemPromptPanel,
+                  panel.prompt.id == id, panel.prompt.revision == revision else { return }
+            panel.receiveResult(error)
+        }
+        v.recoversConnection = { Prefs.reconnectEnabled }
+        v.onChange = { [weak self, weak v] in
+            if v?.isConnected == true { self?.reconnectDelay = 2 }
+            else { self?.systemPromptPanel?.close() }
+            self?.statusMenu.sessionChanged()
+        }
         v.onClose = { [weak self, weak v] error in
             guard let self, session === v else { return }
             session = nil
+            systemPromptPanel?.close()
+            if error != nil, Prefs.reconnectEnabled { scheduleReconnect(to: address, label: label) }
             statusMenu.sessionChanged()
             updateActivationPolicy()
-            if let error {
+            if let error, !isReconnecting {
                 Log.warning(.viewer, "couldn't connect to \(label): \(error)")
                 // Tests (WISP_NO_ALERTS=1) can't click OK: the log has it.
                 if ProcessInfo.processInfo.environment["WISP_NO_ALERTS"] == "1" { return }
@@ -197,7 +229,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
         updateActivationPolicy()
     }
 
-    func disconnect() { session?.disconnect() }
+    private func showSystemPrompt(_ prompt: SystemPrompt, host: String, client: Client) {
+        if let panel = systemPromptPanel, panel.prompt.id == prompt.id, panel.prompt.revision == prompt.revision {
+            panel.update(prompt)
+            return
+        }
+        systemPromptPanel?.close()
+        systemPromptPanel = nil
+        guard prompt.id != 0 else { return }
+        Log.info(.viewer, "system prompt on \(host) (window \(prompt.id))")
+        let panel = SystemPromptPanel(prompt: prompt, host: host) { [weak client] action in
+            client?.sendControl(action.encode())
+        }
+        systemPromptPanel = panel
+        panel.present()
+    }
+
+    private func scheduleReconnect(to address: String, label: String) {
+        let delay = reconnectDelay
+        reconnectDelay = min(delay * 2, 30)
+        Log.info(.viewer, "retrying \(label) in \(Int(delay)) s")
+        reconnectTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { [weak self] timer in
+            self?.checkReconnect(to: address, label: label, timer: timer)
+        }
+    }
+
+    private func checkReconnect(to address: String, label: String, timer: Timer) {
+        Probe.run(host: address) { [weak self] result in
+            guard let self, reconnectTimer === timer else { return }
+            reconnectTimer = nil
+            if Prefs.reconnectEnabled, session == nil {
+                // A retry must not displace a viewer who connected while we were offline.
+                if case .sharing(let host) = result, !host.viewerConnected {
+                    startViewerSession(to: address, label: label)
+                } else {
+                    scheduleReconnect(to: address, label: label)
+                }
+            }
+            statusMenu.sessionChanged()
+        }
+    }
+
+    private func cancelReconnect() {
+        reconnectTimer?.invalidate()
+        reconnectTimer = nil
+        reconnectDelay = 2
+    }
+
+    func disconnect() {
+        cancelReconnect()
+        if let session { session.disconnect() }
+        else { statusMenu.sessionChanged() }
+    }
 
     // MARK: Host
 
@@ -274,6 +357,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, StatusMenuActions {
 
     func applicationShouldTerminateAfterLastWindowClosed(_ s: NSApplication) -> Bool { false }
     func applicationWillTerminate(_ n: Notification) {
+        cancelReconnect()
         Log.info(.app, "quitting" + (session.map { ", disconnecting from \($0.hostName)" } ?? "") + (host == nil ? "" : ", stopping sharing"))
         host?.terminate()
         session?.stop()

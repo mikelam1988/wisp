@@ -985,3 +985,73 @@ replaced. While enabled, the host refreshes its macOS user-activity
 assertion roughly every 20 seconds. Turning the setting off releases the
 assertion. Both Macs need the updated build for the setting to control
 an existing installation’s host behavior.
+
+### Recovering a viewer connection after the host restarts
+
+The viewing preference for connecting at launch also enables background
+retries after an interrupted connection. The app waits 2 seconds before
+probing the host and doubles the interval up to 30 seconds while it is
+unavailable or in use. A successful reconnection resets the interval and
+fetches a fresh window list. Turning off the menu’s connection switch
+cancels pending retries. The host can keep its existing protocol version.
+
+### Capture stability during viewer window resizing
+
+The viewer stretches the current image locally while the user drags the
+window and sends the final size when they release it. This avoids repeatedly
+reconfiguring ScreenCaptureKit and recreating the encoder and decoder during
+one drag. The existing resize acknowledgement still reports the size the
+host app accepted. A stream with a working UDP path and no initial video
+packets also requests a fresh keyframe after two seconds, even when the
+window is idle.
+
+### System permission prompt notices
+
+When an authenticated viewer is connected, the host checks for on-screen
+modal panels owned by macOS UserNotificationCenter alongside its session
+check. A new panel opens a Wisp notice on the viewer, even
+when no application window is being streamed. The notice closes when the
+panel disappears or the viewer disconnects. Wisp copies the dialog's
+readable static text through Accessibility and uses a generic notice if
+macOS exposes only the window metadata. On macOS 15.7.9, a Local Network
+permission test exposed window metadata with window sharing disabled.
+On authenticated Wisp Direct connections, the notice mirrors available
+buttons and text fields. The host checks that the prompt and control
+layout are current, applies text edits through Accessibility, then
+presses the requested button. Secure fields are masked on the viewer and
+their existing values are never read from the host. Text edits and
+buttons are active only if macOS exposes the corresponding action.
+The host also recognizes the macOS SecurityAgent administrator
+authentication window. If its Accessibility tree is unavailable, the
+viewer shows an authentication notice without input controls. Secure
+text is sent only with a button submission and cleared on receipt of
+the host's result.
+
+Viewers advertising `promptAppearance` receive the permission panel's point
+size and window-relative Accessibility frames. For shareable panels the host
+uses a single-window ScreenCaptureKit filter and sends a lossless PNG at
+backing resolution. It checks on the two-second session tick and sends changed
+images in bounded chunks. Buttons remain interactive at their original
+positions. Images belong to one window, layout revision and viewer connection.
+If the window is protected, unavailable, or produces a blank frame, the viewer
+draws the available labels and controls in their host positions. The Local
+Network fallback uses the host system's privacy icon and a pink perimeter.
+A real macOS 15.7.9 Local Network request measured 260 × 234 points on both
+host and viewer and exposed two buttons. Older peers retain the text protocol.
+
+The separate `authorizationLayout` viewer feature also enables window-relative
+frames for SecurityAgent forms. The visible static text supplies the application
+heading. The viewer uses the reported positions for the form and actions, and
+shows the Wisp icon in the host icon area. The icon tooltip and accessibility
+label identify the remote connection. Older peers
+and forms with incomplete geometry use a stacked form. New prompt panels open
+on the display under the viewer’s pointer, 24 points from the top and right
+of its usable desktop when space permits.
+
+On macOS 15, Screen Recording and Accessibility warnings can share a normal-layer
+window owned by the system's universalAccessAuthWarn executable. The host matches
+that executable and passes its current layout through the prompt protocol. After
+the viewer presses the original Open System Settings button, the host waits for
+a shareable System Settings window and replies to the same viewer connection.
+The viewer opens or focuses that window using its regular window picker path.
+The native button selects the privacy pane.

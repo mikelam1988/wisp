@@ -111,6 +111,7 @@ final class Server {
     /// The viewer wants an app reopened, as a Dock click would (appKey).
     var onReopenApp: ((String) -> Void)?
     var onAppRequest: ((UInt32, String?, NWConnection) -> Void)?
+    var onSystemPromptAction: ((SystemPromptAction, NWConnection) -> Void)?
     /// The viewer connection closed (not called when a new viewer replaces the old one).
     var onViewerGone: (() -> Void)?
     /// A new viewer said hello (it replaces any earlier one, whose streams are over).
@@ -179,6 +180,14 @@ final class Server {
     var viewerFollowsNewWindows: Bool {
         lock.lock(); defer { lock.unlock() }
         return viewer != nil && viewerFeatures & Wire.Feature.followsNewWindows != 0
+    }
+    var viewerSupportsAuthorizationLayout: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return viewerFeatures & Wire.Feature.authorizationLayout != 0
+    }
+    var promptAppearanceViewer: NWConnection? {
+        lock.lock(); defer { lock.unlock() }
+        return viewerFeatures & Wire.Feature.promptAppearance != 0 ? viewer : nil
     }
     /// The current viewer announced Wire.Feature.clipboard.
     var viewerSyncsClipboard: Bool {
@@ -495,6 +504,10 @@ final class Server {
             lock.lock()
             if viewer === c { viewerKeepsDisplayAwake = on == 1 }
             lock.unlock()
+        case .systemPromptAction:
+            if isCurrentViewer(c), let action = SystemPromptAction.decode(p) {
+                onSystemPromptAction?(action, c)
+            }
         case .clipboardBegin, .clipboardChunk, .clipboardState:
             // Only the admitted, current viewer (not a replaced one still sending, not a side channel).
             lock.lock(); let current = viewer === c; lock.unlock()

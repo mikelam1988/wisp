@@ -53,6 +53,8 @@ public enum Wire {
 
         public static let authorizationLayout: UInt32 = 1 << 4
 
+        public static let keyboardInputSource: UInt32 = 1 << 5
+
         /// "0x1 (followsNewWindows)", for the log.
         public static func describe(_ bits: UInt32) -> String {
             var names: [String] = []
@@ -61,7 +63,8 @@ public enum Wire {
             if bits & applicationLauncher != 0 { names.append("applicationLauncher") }
             if bits & promptAppearance != 0 { names.append("promptAppearance") }
             if bits & authorizationLayout != 0 { names.append("authorizationLayout") }
-            let unknown = bits & ~(followsNewWindows | clipboard | applicationLauncher | promptAppearance | authorizationLayout)
+            if bits & keyboardInputSource != 0 { names.append("keyboardInputSource") }
+            let unknown = bits & ~(followsNewWindows | clipboard | applicationLauncher | promptAppearance | authorizationLayout | keyboardInputSource)
             if unknown != 0 { names.append("unknown 0x\(String(unknown, radix: 16))") }
             return "0x\(String(bits, radix: 16))" + (names.isEmpty ? "" : " (\(names.joined(separator: ", ")))")
         }
@@ -148,6 +151,7 @@ public enum MsgType: UInt8 {
     case launchApplication = 26 // u32 request ID, str app catalog ID
     case keepHostDisplayAwake = 27 // u8 on (0 or 1), for the current viewer connection
     case systemPromptAction = 28 // SystemPromptAction
+    case keyboardInputSource = 29 // str selected keyboard source ID (including the input mode)
     // Clipboard sync, both ways (only to a peer whose hello/helloAck has Wire.Feature.clipboard; see
     // Sources/wisp/Clipboard.swift). The same three messages host -> viewer are 130, 131 and 132.
     case clipboardBegin = 30  // u32 id, u32 totalBytes, u8 n, n x (str UTI, u32 bytes): a new clipboard (one item's

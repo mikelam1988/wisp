@@ -53,6 +53,7 @@ final class Client {
 
     /// The host answered our hello (its name): streams can be opened now.
     var onReady: ((String) -> Void)?
+    var onInputSourceSyncAvailable: (() -> Void)?
     var onAppLauncherAvailable: (() -> Void)?
     var onAppCatalogEntry: ((UInt32, RemoteApplication?) -> Void)?
     var onAppLaunchResult: ((UInt32, UInt32, String) -> Void)?
@@ -374,6 +375,7 @@ final class Client {
         screenObserver = nil
         let cb = clipboard
         DispatchQueue.main.async { cb?.disconnected() }
+        onInputSourceSyncAvailable = nil
         onDisconnect = nil; onWindowList = nil; onHostStatus = nil; onHostSystemPrompt = nil; onHostSystemPromptImage = nil; onHostSystemPromptResult = nil; onPromptSettingsWindow = nil; onReady = nil
         onStreamOpened = nil; onStreamClosed = nil; onLargeIcon = nil; onMenuTree = nil
     }
@@ -519,6 +521,7 @@ final class Client {
                 main {
                     if h.features & Wire.Feature.applicationLauncher != 0 { $0.onAppLauncherAvailable?() }
                     $0.onReady?(h.name)
+                    if h.features & Wire.Feature.keyboardInputSource != 0 { $0.onInputSourceSyncAvailable?() }
                 }
             case .refused:
                 // The host won't serve us (its allow-list, or we're not on Tailscale): it says why.

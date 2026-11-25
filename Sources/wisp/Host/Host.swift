@@ -147,6 +147,7 @@ final class Host {
     private var rateTimer: DispatchSourceTimer?
     private var sessionTimer: DispatchSourceTimer?
     private var lastStatus = ""
+    private var viewerInputSource: (id: String, peer: NWConnection)?
     private let systemPrompts = SystemPromptHost()
     private var lastActivity = Date.distantPast
     private var activityID: IOPMAssertionID = 0
@@ -215,6 +216,13 @@ final class Host {
             server.onClipboard = { t, p in main.async { cb.receive(t, p) } }
         } else {
             clipboard = nil
+        }
+        server.onKeyboardInputSource = { [weak self] id, peer in
+            main.async {
+                guard let self, !self.isSynthetic, self.server.isCurrentViewer(peer) else { return }
+                self.viewerInputSource = (id, peer)
+                self.checkSession()
+            }
         }
         server.onSystemPromptAction = { [weak self] action, connection in
             main.async {
@@ -572,6 +580,7 @@ final class Host {
     private func stream(_ s: UInt16) -> HostStream? { s == 0 ? primary : streams[s] }
 
     func start() throws {
+        if !isSynthetic { server.hostFeatures |= Wire.Feature.keyboardInputSource }
         try server.start()
         server.onViewerReady = { [weak self] in
             DispatchQueue.main.async {
@@ -1387,6 +1396,13 @@ final class Host {
         let session = CGSessionCopyCurrentDictionary() as? [String: Any]
         let locked = session?["CGSSessionScreenIsLocked"] as? Bool ?? false
         screenLocked = locked
+        if let source = viewerInputSource {
+            if !server.isCurrentViewer(source.peer) {
+                viewerInputSource = nil
+            } else if !locked, !KeyboardInputSource.apply(source.id) {
+                viewerInputSource = nil
+            }
+        }
         if !isSynthetic, server.hasViewerConnection {
             let peer = server.promptAppearanceViewer
             if let prompt = systemPrompts.update(locked: locked, interactive: server.directAddresses != nil, appearance: peer != nil,

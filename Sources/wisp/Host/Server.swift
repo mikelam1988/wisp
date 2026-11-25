@@ -111,6 +111,7 @@ final class Server {
     /// The viewer wants an app reopened, as a Dock click would (appKey).
     var onReopenApp: ((String) -> Void)?
     var onAppRequest: ((UInt32, String?, NWConnection) -> Void)?
+    var onKeyboardInputSource: ((String, NWConnection) -> Void)?
     var onSystemPromptAction: ((SystemPromptAction, NWConnection) -> Void)?
     /// The viewer connection closed (not called when a new viewer replaces the old one).
     var onViewerGone: (() -> Void)?
@@ -504,6 +505,10 @@ final class Server {
             lock.lock()
             if viewer === c { viewerKeepsDisplayAwake = on == 1 }
             lock.unlock()
+        case .keyboardInputSource:
+            guard isCurrentViewer(c), p.count <= 514, let id = r.str(), !id.isEmpty, r.remaining == 0,
+                  id.rangeOfCharacter(from: .controlCharacters) == nil else { return }
+            onKeyboardInputSource?(id, c)
         case .systemPromptAction:
             if isCurrentViewer(c), let action = SystemPromptAction.decode(p) {
                 onSystemPromptAction?(action, c)

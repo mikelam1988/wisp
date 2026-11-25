@@ -36,6 +36,7 @@ final class ViewerSession: WindowOwner {
     private(set) var notice: String?
     /// The host answered our hello.
     var isConnected: Bool { ready && status == nil }
+    private let keyboardSource = KeyboardInputSource()
     private var statsTimer: Timer?
     /// Host windows asked for and not answered yet, so choosing one twice doesn't open two windows.
     private var opening: Set<UInt32> = []
@@ -73,6 +74,12 @@ final class ViewerSession: WindowOwner {
             self?.ready = true
             self?.setStatus(nil)
             self?.client.openStream(windowID: 0) // the window the host shares
+        }
+        client.onInputSourceSyncAvailable = { [weak self] in
+            guard let self, isConnected, !stopped else { return }
+            keyboardSource.start { [weak client = self.client] id in
+                client?.sendControl(message(.keyboardInputSource) { $0.str(id, max: 512) })
+            }
         }
         client.onAppLauncherAvailable = { [weak self] in self?.supportsApplicationLauncher = true }
         client.onAppCatalogEntry = { [weak self] id, app in self?.appPicker?.receive(app, request: id) }
@@ -253,6 +260,7 @@ final class ViewerSession: WindowOwner {
     private var waitingGiveUp: DispatchWorkItem?
 
     private func disconnected(_ msg: String) {
+        keyboardSource.stop()
         appPicker?.close()
         controllers.forEach { $0.setConnection(msg) }
         let recover = recoversConnection()
@@ -309,6 +317,7 @@ final class ViewerSession: WindowOwner {
         appPicker?.close()
         guard !stopped else { return }
         stopped = true
+        keyboardSource.stop()
         waitingGiveUp?.cancel()
         statsTimer?.invalidate()
         menu?.remove()

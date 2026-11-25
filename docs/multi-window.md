@@ -1055,3 +1055,15 @@ the viewer presses the original Open System Settings button, the host waits for
 a shareable System Settings window and replies to the same viewer connection.
 The viewer opens or focuses that window using its regular window picker path.
 The native button selects the privacy pane.
+
+### Following the viewer's keyboard input source
+
+During an interactive viewer session, the viewer sends its selected macOS
+keyboard input source at connection and when the system selection changes.
+The host selects the same enabled source by its Text Input Sources ID, including
+the input method mode. This works with phantom windows, with the viewer in the
+background and with no streamed window open. The host checks the selection
+again on its session tick so that per-app focus changes and unlocking can
+converge. It defers selection for locked sessions and secure input. An
+unavailable source leaves the host's current selection in place. Disconnecting
+ends the follow behavior and leaves the last selection in place.

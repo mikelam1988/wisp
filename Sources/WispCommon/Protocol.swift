@@ -55,6 +55,8 @@ public enum Wire {
 
         public static let keyboardInputSource: UInt32 = 1 << 5
 
+        public static let followsExternalWindows: UInt32 = 1 << 6
+
         /// "0x1 (followsNewWindows)", for the log.
         public static func describe(_ bits: UInt32) -> String {
             var names: [String] = []
@@ -64,7 +66,8 @@ public enum Wire {
             if bits & promptAppearance != 0 { names.append("promptAppearance") }
             if bits & authorizationLayout != 0 { names.append("authorizationLayout") }
             if bits & keyboardInputSource != 0 { names.append("keyboardInputSource") }
-            let unknown = bits & ~(followsNewWindows | clipboard | applicationLauncher | promptAppearance | authorizationLayout | keyboardInputSource)
+            if bits & followsExternalWindows != 0 { names.append("followsExternalWindows") }
+            let unknown = bits & ~(followsNewWindows | clipboard | applicationLauncher | promptAppearance | authorizationLayout | keyboardInputSource | followsExternalWindows)
             if unknown != 0 { names.append("unknown 0x\(String(unknown, radix: 16))") }
             return "0x\(String(bits, radix: 16))" + (names.isEmpty ? "" : " (\(names.joined(separator: ", ")))")
         }

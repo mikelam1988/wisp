@@ -131,6 +131,13 @@ final class Host {
     private var followed: [String: Followed] = [:]
     private var followTimer: DispatchSourceTimer?
     private var followPolling = false
+    private struct ExternalWindowWatch {
+        let sourcePID: pid_t
+        let peer: NWConnection
+        let existing: Set<CGWindowID>
+        let started: TimeInterval
+    }
+    private var externalWatch: ExternalWindowWatch?
     /// New windows not streamed because of the limit, oldest first: opened when a stream closes.
     private var heldNew: [NewWindow] = []
     static let followInterval: TimeInterval = 0.5
@@ -216,6 +223,10 @@ final class Host {
             server.onClipboard = { t, p in main.async { cb.receive(t, p) } }
         } else {
             clipboard = nil
+        }
+        injector.beforeOpeningAction = { [weak self] target in
+            guard let self, let source = streams.values.first(where: { $0.target === target }) else { return }
+            watchForExternalWindow(from: source)
         }
         server.onKeyboardInputSource = { [weak self] id, peer in
             main.async {
@@ -396,6 +407,7 @@ final class Host {
         followTimer = nil
         followed = [:]
         heldNew = []
+        externalWatch = nil
     }
 
     /// Every 0.5 s while something is followed: list the followed apps' windows (ScreenCaptureKit,
@@ -409,6 +421,7 @@ final class Host {
             return
         }
         guard !followPolling, !DisplayGate.busy else { return }
+        checkExternalWindow()
         followPolling = true
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -416,6 +429,46 @@ final class Host {
             followPolling = false
             DisplayGate.whenIdle { [weak self] in self?.noticeNewWindows(found, of: keys) }
         }
+    }
+
+    /// Snapshot window IDs before dispatching the action. Including off-screen windows prevents a
+    /// destination app switching Spaces or restoring a minimized document from looking like creation.
+    /// Main queue, gated along with the input that arms it.
+    private func watchForExternalWindow(from source: HostStream) {
+        guard !DisplayGate.busy, source.subscribed, !source.closed, !screenLocked,
+              let peer = server.externalWindowViewer,
+              NSWorkspace.shared.frontmostApplication?.processIdentifier == source.pid else { return }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let watch = externalWatch, watch.sourcePID == source.pid, watch.peer === peer,
+           now - watch.started < 0.35 { return } // keep the pre-click snapshot through mouse-up
+        guard let list = CGWindowListCopyWindowInfo([.optionAll, .excludeDesktopElements], kCGNullWindowID)
+            as? [[CFString: Any]] else { return }
+        externalWatch = ExternalWindowWatch(sourcePID: source.pid, peer: peer,
+            existing: Set(list.compactMap { $0[kCGWindowNumber] as? CGWindowID }), started: now)
+    }
+
+    /// macOS doesn't identify the source of a LaunchServices handoff. Match one newly created,
+    /// focused document in the app that came forward shortly after the remote action.
+    private func checkExternalWindow() {
+        guard let watch = externalWatch else { return }
+        guard !screenLocked, server.isCurrentViewer(watch.peer),
+              ProcessInfo.processInfo.systemUptime - watch.started <= 5 else { externalWatch = nil; return }
+        guard let app = NSWorkspace.shared.frontmostApplication, app.processIdentifier != watch.sourcePID,
+              app.activationPolicy == .regular, app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        let axApp = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(axApp, 0.1)
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axApp, kAXFocusedWindowAttribute as CFString, &value) == .success,
+              let value, CFGetTypeID(value) == AXUIElementGetTypeID() else { return }
+        let window = value as! AXUIElement
+        guard let id = cgWindowID(of: window), !watch.existing.contains(id),
+              axString(window, kAXSubroleAttribute) == kAXStandardWindowSubrole,
+              !PanelServices.panelIdentifiers.contains(axString(window, kAXIdentifierAttribute)),
+              !panels.isPanel(id) else { return }
+        externalWatch = nil
+        let key = app.bundleIdentifier ?? "pid:\(app.processIdentifier)"
+        let w = NewWindow(id: id, appKey: key, appName: app.localizedName ?? key, pid: app.processIdentifier)
+        serially { await $0.openNewWindow(w, peer: watch.peer) }
     }
 
     /// The on-screen, layer-0 windows of apps `keys` (the synthetic host's own list for it).
@@ -490,12 +543,14 @@ final class Host {
     /// (newWindowHeld) and keeps the window for when a stream closes. A held window opens then even if
     /// the stream that closed was its app's last.
     @MainActor
-    private func openNewWindow(_ w: NewWindow, held: Bool = false) async {
-        guard server.viewerFollowsNewWindows, held || followed[w.appKey] != nil else { return }
+    private func openNewWindow(_ w: NewWindow, held: Bool = false, peer: NWConnection? = nil) async {
+        guard server.viewerFollowsNewWindows, held || followed[w.appKey] != nil || peer != nil else { return }
+        if let peer, !server.isCurrentViewer(peer) { return }
         guard !streams.values.contains(where: { $0.windowID == w.id && !$0.closed }) else { return }
         guard streams.count < opts.maxStreams else {
             Log.info(.host, "follow: \(w.appName)'s new window \(w.id) not streamed: \(streams.count) windows are already (the limit); it opens when one closes")
-            if !heldNew.contains(where: { $0.id == w.id }) { heldNew.append(w) }
+            guard !heldNew.contains(where: { $0.id == w.id }) else { return }
+            heldNew.append(w)
             server.sendControl(message(.newWindowHeld) {
                 $0.u32(w.id); $0.str(w.appKey); $0.str(w.appName)
                 $0.u8(UInt8(clamping: self.streams.count)); $0.u8(UInt8(clamping: self.opts.maxStreams))
@@ -504,6 +559,7 @@ final class Host {
         }
         do {
             let s = try await startStream(windowID: w.id)
+            if let peer, !server.isCurrentViewer(peer) { await discard(s); return }
             Log.info(.host, "follow: streaming \(w.appName)'s new window \(w.id) as stream #\(s.id)")
             announce(s)
         } catch {
@@ -568,7 +624,8 @@ final class Host {
         guard let app = app(for: m.appKey) else { Log.info(.menu, "menu: can't choose \(m.describe): \(m.appKey) isn't running"); return }
         let st = streams[m.stream].flatMap { $0.pid == app.pid && !$0.closed ? $0 : nil }
         let what = "\(m.describe) in \(app.name)" + (st.map { " (for stream #\($0.id))" } ?? "")
-        let press = { [menuReader] in
+        let press = { [weak self, menuReader] in
+            if let st { self?.watchForExternalWindow(from: st) }
             menuReader.press(pid: app.pid, path: m.path) { err in
                 Log.info(.menu, err.map { "menu: couldn't choose \(what): \($0)" } ?? "menu: chose \(what)")
             }

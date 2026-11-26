@@ -105,6 +105,8 @@ final class Injector {
     var sink: ((CGEvent, WindowTarget) -> Void)?
     /// Dry run: a window was brought forward (or would have been), and why.
     var onRaise: ((WindowTarget, String) -> Void)?
+    /// Runs immediately before posting a click or opening shortcut, after any focus change.
+    var beforeOpeningAction: ((WindowTarget) -> Void)?
     let events = Counter()
     /// Dry run with WISP_FAULT=focus-hold: play a host where input for a window that isn't in front
     /// raises it and holds input meanwhile, as on a real host (the window last raised counts as in
@@ -301,7 +303,18 @@ final class Injector {
     }
 
     private func deliver(_ e: CGEvent, _ t: WindowTarget) {
-        if dryRun { sink?(e, t) } else { e.post(tap: .cghidEventTap) }
+        if dryRun { sink?(e, t); return }
+        switch e.type {
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp, .otherMouseDown, .otherMouseUp:
+            beforeOpeningAction?(t)
+        case .keyDown:
+            // Return, keypad Enter, Space or a command shortcut can open a document.
+            if e.flags.contains(.maskCommand) || [36, 76, 49].contains(e.getIntegerValueField(.keyboardEventKeycode)) {
+                beforeOpeningAction?(t)
+            }
+        default: break
+        }
+        e.post(tap: .cghidEventTap)
     }
 
     // MARK: Keeping the target window in front

@@ -147,7 +147,7 @@ final class Client {
                 } else {
                     var hello = Hello(name: Foundation.Host.current().localizedName ?? "viewer")
                     hello.features |= Wire.Feature.promptAppearance | Wire.Feature.authorizationLayout
-                    if followsNewWindows { hello.features |= Wire.Feature.followsNewWindows }
+                    if followsNewWindows { hello.features |= Wire.Feature.followsNewWindows | Wire.Feature.followsExternalWindows }
                     if clipboard != nil { hello.features |= Wire.Feature.clipboard }
                     Log.info(.viewer, "→ hello: protocol \(hello.version), features \(Wire.Feature.describe(hello.features)), name \"\(hello.name)\"")
                     send(hello.encode())

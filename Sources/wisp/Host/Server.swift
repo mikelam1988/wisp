@@ -182,6 +182,10 @@ final class Server {
         lock.lock(); defer { lock.unlock() }
         return viewer != nil && viewerFeatures & Wire.Feature.followsNewWindows != 0
     }
+    var externalWindowViewer: NWConnection? {
+        lock.lock(); defer { lock.unlock() }
+        return viewerFeatures & Wire.Feature.followsExternalWindows != 0 ? viewer : nil
+    }
     var viewerSupportsAuthorizationLayout: Bool {
         lock.lock(); defer { lock.unlock() }
         return viewerFeatures & Wire.Feature.authorizationLayout != 0

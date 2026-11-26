@@ -56,6 +56,7 @@ final class Client {
     var onInputSourceSyncAvailable: (() -> Void)?
     var onAppLauncherAvailable: (() -> Void)?
     var onAppCatalogEntry: ((UInt32, RemoteApplication?) -> Void)?
+    var onAppCatalogIcon: ((UInt32, String, Data) -> Void)?
     var onAppLaunchResult: ((UInt32, UInt32, String) -> Void)?
     var onHostStatus: ((String) -> Void)?
     var onHostSystemPrompt: ((SystemPrompt) -> Void)?
@@ -425,7 +426,7 @@ final class Client {
     }
 
     func requestApplications(_ id: UInt32) {
-        sendControl(message(.appCatalogRequest) { $0.u32(id) })
+        sendControl(message(.appCatalogRequest) { $0.u32(id); $0.u8(1) })
     }
 
     func launchApplication(_ app: RemoteApplication, request: UInt32) {
@@ -617,6 +618,10 @@ final class Client {
             } else if let id = r.str(), let name = r.str() {
                 main { $0.onAppCatalogEntry?(request, RemoteApplication(id: id, name: name)) }
             }
+        case .appCatalogIcon:
+            guard let request = r.u32(), let id = r.str(), (1 ... 56 * 1024).contains(r.remaining) else { return }
+            let png = r.rest()
+            main { $0.onAppCatalogIcon?(request, id, png) }
         case .appLaunchResult:
             if let request = r.u32(), let window = r.u32(), let status = r.str() {
                 main { $0.onAppLaunchResult?(request, window, status) }

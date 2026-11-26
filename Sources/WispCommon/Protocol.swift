@@ -150,7 +150,7 @@ public enum MsgType: UInt8 {
                               // lists none of that app. The host sends the app a reopen event, as a Dock click there
                               // would (launching it if it isn't running); with followsNewWindows its new window then
                               // opens as a stream by itself. An older host ignores it.
-    case appCatalogRequest = 25 // u32 request ID
+    case appCatalogRequest = 25 // u32 request ID, optional u8 wants icons
     case launchApplication = 26 // u32 request ID, str app catalog ID
     case keepHostDisplayAwake = 27 // u8 on (0 or 1), for the current viewer connection
     case systemPromptAction = 28 // SystemPromptAction
@@ -191,6 +191,7 @@ public enum MsgType: UInt8 {
                               // opened a new window, which isn't streamed because `open` windows already are (the
                               // limit, `max`). It opens by itself once a stream closes. Only with followsNewWindows.
     case appCatalogEntry = 116 // u32 request ID, str app ID, str name; ID alone ends the catalog
+    case appCatalogIcon = 122 // u32 catalog request ID, str app ID, remaining bytes: PNG
     case appLaunchResult = 117 // u32 request ID, u32 window ID (0 if none), str status
     case hostSystemPrompt = 118 // u32 window ID (0 when dismissed), str visible prompt text if available
     case hostPromptSettingsWindow = 121 // u32 remote window ID, or 0 if no Settings window appeared

@@ -6,6 +6,13 @@ import WispCommon
 /// Catalog I/O runs on its own queue. LaunchServices and window lookup run on the main actor.
 enum ApplicationLauncher {
     private static let queue = DispatchQueue(label: "wisp.app-catalog", qos: .userInitiated)
+    private static let iconQueue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.name = "wisp.app-catalog.icons"
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .utility
+        return queue
+    }()
     private static let installedRoot = URL(fileURLWithPath: "/Applications", isDirectory: true)
     private static let systemRoot = URL(fileURLWithPath: "/System/Applications", isDirectory: true)
     private static let finder = URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app", isDirectory: true)
@@ -19,16 +26,18 @@ enum ApplicationLauncher {
         let url: URL
     }
 
-    static func handle(id: UInt32, app: String?, server: Server, connection: NWConnection) {
+    static func handle(id: UInt32, app: String?, wantsIcons: Bool, server: Server, connection: NWConnection) {
         queue.async {
             guard server.isCurrentViewer(connection) else { return }
             let apps = installedApps()
             func send(_ reply: Data) { server.sendAppReply(reply, to: connection) }
             guard let app else {
+                iconQueue.cancelAllOperations()
                 for entry in apps {
                     send(message(.appCatalogEntry) { $0.u32(id); $0.str(entry.id, max: 4096); $0.str(entry.name, max: 1024) })
                 }
                 send(message(.appCatalogEntry) { $0.u32(id) })
+                if wantsIcons { sendIcons(for: apps, request: id, server: server, connection: connection) }
                 return
             }
             guard let entry = apps.first(where: { $0.id == app }) else {
@@ -39,6 +48,24 @@ enum ApplicationLauncher {
                 await launch(entry, request: id, server: server, connection: connection)
             }
         }
+    }
+
+    // Names are already on their way. Drawing icons must not hold up search or launch requests.
+    private static func sendIcons(for apps: [Entry], request: UInt32, server: Server, connection: NWConnection) {
+        let work = BlockOperation()
+        work.addExecutionBlock { [weak work] in
+            for entry in apps {
+                guard work?.isCancelled == false, server.isCurrentViewer(connection) else { return }
+                autoreleasepool {
+                    let icon = NSWorkspace.shared.icon(forFile: entry.url.path)
+                    guard let png = pngIcon(icon, px: 112), png.count <= 56 * 1024 else { return }
+                    server.sendAppReply(message(.appCatalogIcon) {
+                        $0.u32(request); $0.str(entry.id, max: 4096); $0.bytes(png)
+                    }, to: connection)
+                }
+            }
+        }
+        iconQueue.addOperation(work)
     }
 
     private static func installedApps() -> [Entry] {

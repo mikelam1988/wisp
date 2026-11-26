@@ -83,6 +83,7 @@ final class ViewerSession: WindowOwner {
         }
         client.onAppLauncherAvailable = { [weak self] in self?.supportsApplicationLauncher = true }
         client.onAppCatalogEntry = { [weak self] id, app in self?.appPicker?.receive(app, request: id) }
+        client.onAppCatalogIcon = { [weak self] id, app, png in self?.appPicker?.receiveIcon(png, for: app, request: id) }
         client.onAppLaunchResult = { [weak self] id, window, status in
             self?.appPicker?.launched(window, status: status, request: id)
         }

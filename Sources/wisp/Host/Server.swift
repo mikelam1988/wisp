@@ -110,7 +110,7 @@ final class Server {
     var onWindowAction: ((UInt16, UInt8) -> Void)?
     /// The viewer wants an app reopened, as a Dock click would (appKey).
     var onReopenApp: ((String) -> Void)?
-    var onAppRequest: ((UInt32, String?, NWConnection) -> Void)?
+    var onAppRequest: ((UInt32, String?, Bool, NWConnection) -> Void)?
     var onKeyboardInputSource: ((String, NWConnection) -> Void)?
     var onSystemPromptAction: ((SystemPromptAction, NWConnection) -> Void)?
     /// The viewer connection closed (not called when a new viewer replaces the old one).
@@ -496,9 +496,9 @@ final class Server {
         case .appCatalogRequest, .launchApplication:
             guard isCurrentViewer(c), let id = r.u32() else { return }
             if t == .appCatalogRequest {
-                onAppRequest?(id, nil, c)
+                onAppRequest?(id, nil, r.u8() == 1, c)
             } else if let app = r.str(), !app.isEmpty {
-                onAppRequest?(id, app, c)
+                onAppRequest?(id, app, false, c)
             }
         case .menuRequest:
             if let (key, menu) = MenuTree.decodeRequest(p) { onMenuRequest?(key, menu) }

@@ -937,7 +937,12 @@ control-channel probes made without a key or with a different key.
 ### Launching an app on the host
 
 The connected viewer offers **Launch App…** when the host advertises the
-application launcher. The host lists bundles in `/Applications` and
+application launcher. Choosing the item brings the picker to the viewer’s current
+Space and gives it keyboard focus. Choosing it again raises the existing picker
+and preserves the search. The viewer displays a searchable grid.
+Clicking an icon launches its app, and Return in the search field launches the first match.
+The host sends the names first, then the app bundle icons on the same session
+when the viewer requests them. The host lists bundles in `/Applications` and
 `/System/Applications`, including subfolders such as `Utilities`. System links
 such as Safari are included and duplicate entries for the same bundle are
 merged. Finder is included explicitly from CoreServices. Hidden third-party apps, apps nested inside other bundles, and links

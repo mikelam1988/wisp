@@ -323,7 +323,12 @@ final class StatusMenuController: NSObject, NSMenuDelegate {
 
     @objc private func chooseApplication() {
         guard let session = actions?.session else { return }
-        session.chooseApplication(on: label(for: session.hostName))
+        let hostLabel = label(for: session.hostName)
+        // Let status-menu tracking finish restoring the previous app before activating the picker.
+        RunLoop.main.perform(inModes: [.default]) { [weak self, weak session] in
+            guard let session, self?.actions?.session === session else { return }
+            session.chooseApplication(on: hostLabel)
+        }
     }
 
     @objc private func connectToMac(_ sender: NSMenuItem) {

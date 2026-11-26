@@ -211,9 +211,9 @@ final class Host {
         server = Server(paceMbps: opts.paceMbps, fecGroup: opts.fec)
         let main = DispatchQueue.main
         server.hostFeatures |= Wire.Feature.applicationLauncher
-        server.onAppRequest = { [weak server] id, app, connection in
+        server.onAppRequest = { [weak server] id, app, wantsIcons, connection in
             guard let server else { return }
-            ApplicationLauncher.handle(id: id, app: app, server: server, connection: connection)
+            ApplicationLauncher.handle(id: id, app: app, wantsIcons: wantsIcons, server: server, connection: connection)
         }
         if opts.clipboard {
             let server = server
